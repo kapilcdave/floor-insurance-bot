@@ -44,6 +44,7 @@ class Config:
     data_base_url: str
     paper: bool
     live_confirmed: bool
+    stock_feed: str
     options_feed: str
     symbol: str
     buffer_dollars: Decimal
@@ -88,6 +89,9 @@ class Config:
             ).rstrip("/"),
             paper=paper,
             live_confirmed=live_confirmed,
+            stock_feed=os.getenv(
+                "STOCK_FEED", "iex" if paper else "sip"
+            ).strip().lower(),
             options_feed=os.getenv("OPTIONS_FEED", "indicative").strip().lower(),
             symbol=os.getenv("UNDERLYING", "SPY").strip().upper(),
             buffer_dollars=_decimal("BUFFER_DOLLARS", "15"),
@@ -126,6 +130,10 @@ class Config:
             )
         if not self.paper and self.options_feed != "opra":
             raise ConfigError("live trading requires OPTIONS_FEED=opra")
+        if not self.paper and self.stock_feed != "sip":
+            raise ConfigError("live trading requires STOCK_FEED=sip")
+        if self.stock_feed not in {"iex", "sip"}:
+            raise ConfigError("STOCK_FEED must be iex or sip")
         if self.options_feed not in {"indicative", "opra"}:
             raise ConfigError("OPTIONS_FEED must be indicative or opra")
         if self.spread_width <= 0 or self.buffer_dollars <= 0:
@@ -138,4 +146,3 @@ class Config:
             raise ConfigError("contract and loss caps must be positive")
         if min(self.poll_seconds_idle, self.poll_seconds_open) < 1:
             raise ConfigError("poll intervals must be positive")
-
