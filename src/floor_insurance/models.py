@@ -42,6 +42,7 @@ class DailyState:
     quantity: int = 0
     entry_credit: str | None = None
     active_order_id: str | None = None
+    active_client_order_id: str | None = None
     exit_reason: str | None = None
     last_event: str = "fresh day"
     event_history: list[dict[str, Any]] = field(default_factory=list)
@@ -63,4 +64,3 @@ class DailyState:
         copy = dict(data)
         copy["phase"] = Phase(copy.get("phase", Phase.IDLE))
         return cls(**copy)
-

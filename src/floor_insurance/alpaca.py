@@ -15,7 +15,9 @@ LOG = logging.getLogger(__name__)
 
 
 class AlpacaError(RuntimeError):
-    pass
+    def __init__(self, message: str, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def _timestamp(value: str) -> datetime:
@@ -71,7 +73,10 @@ class AlpacaClient:
                     detail = f": {exc.response.text[:300]}"
                 if method == "POST":
                     detail += " (submission outcome may be unknown; reconcile by client_order_id)"
-                raise AlpacaError(f"Alpaca {method} {path} failed{detail}") from exc
+                status = exc.response.status_code if getattr(exc, "response", None) is not None else None
+                raise AlpacaError(
+                    f"Alpaca {method} {path} failed{detail}", status_code=status
+                ) from exc
         raise AssertionError("unreachable")
 
     def clock(self) -> dict[str, Any]:
@@ -204,8 +209,10 @@ class AlpacaClient:
                 "/v2/orders:by_client_order_id",
                 params={"client_order_id": client_order_id, "nested": "true"},
             )
-        except AlpacaError:
-            return None
+        except AlpacaError as exc:
+            if exc.status_code == 404:
+                return None
+            raise
 
     def cancel_order(self, order_id: str) -> None:
         self._request("DELETE", self.config.trading_base_url, f"/v2/orders/{order_id}")
@@ -214,4 +221,3 @@ class AlpacaClient:
     def quote_is_fresh(quote: Quote, max_age_seconds: int) -> bool:
         age = datetime.now(timezone.utc) - quote.timestamp.astimezone(timezone.utc)
         return 0 <= age.total_seconds() <= max_age_seconds
-
