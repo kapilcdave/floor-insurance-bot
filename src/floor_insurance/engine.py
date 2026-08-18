@@ -60,7 +60,10 @@ class TradingEngine:
         elif now.time() >= hard_close:
             self._finish(state, now, "entry window ended without an open position")
         elif self._entry_allowed(now, clock, hard_close):
-            self._enter(state, now)
+            if state.entry_submissions >= self.config.max_daily_entries:
+                self._finish(state, now, "daily entry limit reached")
+            else:
+                self._enter(state, now)
 
         self.store.save(state)
         return (
@@ -310,10 +313,13 @@ class TradingEngine:
             self._clear_trade(state)
             if state.losses >= self.config.max_daily_losses:
                 self._finish(state, now, "daily loss circuit breaker reached")
-            elif now.time() < _time(self.config.entry_cutoff_time):
+            elif (
+                state.entry_submissions < self.config.max_daily_entries
+                and now.time() < _time(self.config.entry_cutoff_time)
+            ):
                 state.phase = Phase.IDLE
             else:
-                self._finish(state, now, "stop filled after entry cutoff")
+                self._finish(state, now, "stop filled; daily entry limit or cutoff reached")
         else:
             self.notifier.send(f"Exit filled ({reason}) at ${price} debit. Done for the day.")
             self._clear_trade(state)
@@ -339,4 +345,3 @@ class TradingEngine:
         state.phase = Phase.DONE
         state.event("done", now, reason=reason)
         LOG.info("trading day complete: %s", reason)
-

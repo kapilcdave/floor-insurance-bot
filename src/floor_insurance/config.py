@@ -54,6 +54,7 @@ class Config:
     take_profit_fraction: Decimal
     min_credit: Decimal
     max_contracts: int
+    max_daily_entries: int
     max_daily_losses: int
     poll_seconds_idle: int
     poll_seconds_open: int
@@ -101,6 +102,7 @@ class Config:
             take_profit_fraction=_decimal("TAKE_PROFIT_FRACTION", "0.50"),
             min_credit=_decimal("MIN_CREDIT", "0.05"),
             max_contracts=_int("MAX_CONTRACTS", 10),
+            max_daily_entries=_int("MAX_DAILY_ENTRIES", 1),
             max_daily_losses=_int("MAX_DAILY_LOSSES", 3),
             poll_seconds_idle=_int("POLL_SECONDS_IDLE", 60),
             poll_seconds_open=_int("POLL_SECONDS_OPEN", 15),
@@ -142,7 +144,7 @@ class Config:
             raise ConfigError("RISK_FRACTION must be greater than 0 and at most 0.05")
         if not (Decimal("0") < self.take_profit_fraction < Decimal("1")):
             raise ConfigError("TAKE_PROFIT_FRACTION must be between 0 and 1")
-        if self.max_contracts < 1 or self.max_daily_losses < 1:
+        if min(self.max_contracts, self.max_daily_entries, self.max_daily_losses) < 1:
             raise ConfigError("contract and loss caps must be positive")
         if min(self.poll_seconds_idle, self.poll_seconds_open) < 1:
             raise ConfigError("poll intervals must be positive")
