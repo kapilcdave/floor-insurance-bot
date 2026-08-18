@@ -85,6 +85,15 @@ class AlpacaClient:
     def account(self) -> dict[str, Any]:
         return self._request("GET", self.config.trading_base_url, "/v2/account")
 
+    def calendar_day(self, trading_date: str) -> dict[str, Any] | None:
+        days = self._request(
+            "GET",
+            self.config.trading_base_url,
+            "/v2/calendar",
+            params={"start": trading_date, "end": trading_date},
+        )
+        return days[0] if days else None
+
     def latest_underlying_trade(self) -> tuple[Decimal, datetime]:
         data = self._request(
             "GET",

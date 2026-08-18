@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import time
 from decimal import Decimal
 from pathlib import Path
 
@@ -138,8 +139,10 @@ class Config:
             raise ConfigError("STOCK_FEED must be iex or sip")
         if self.options_feed not in {"indicative", "opra"}:
             raise ConfigError("OPTIONS_FEED must be indicative or opra")
-        if self.spread_width <= 0 or self.buffer_dollars <= 0:
-            raise ConfigError("spread width and buffer must be positive")
+        if min(self.spread_width, self.buffer_dollars, self.stop_buffer) <= 0:
+            raise ConfigError("spread width, strike buffer, and stop buffer must be positive")
+        if not (Decimal("0") < self.min_credit < self.spread_width):
+            raise ConfigError("MIN_CREDIT must be positive and below SPREAD_WIDTH")
         if not (Decimal("0") < self.risk_fraction <= Decimal("0.05")):
             raise ConfigError("RISK_FRACTION must be greater than 0 and at most 0.05")
         if not (Decimal("0") < self.take_profit_fraction < Decimal("1")):
@@ -148,3 +151,14 @@ class Config:
             raise ConfigError("contract and loss caps must be positive")
         if min(self.poll_seconds_idle, self.poll_seconds_open) < 1:
             raise ConfigError("poll intervals must be positive")
+        if min(self.request_timeout_seconds, self.max_quote_age_seconds) < 1:
+            raise ConfigError("request timeout and quote age must be positive")
+        try:
+            entry = time.fromisoformat(self.entry_time)
+            entry_cutoff = time.fromisoformat(self.entry_cutoff_time)
+            profit_cutoff = time.fromisoformat(self.take_profit_cutoff_time)
+            hard_close = time.fromisoformat(self.hard_close_time)
+        except ValueError as exc:
+            raise ConfigError("schedule values must use HH:MM or HH:MM:SS") from exc
+        if not (entry < entry_cutoff <= hard_close and profit_cutoff <= hard_close):
+            raise ConfigError("schedule must order entry < entry cutoff <= hard close")

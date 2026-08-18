@@ -20,6 +20,11 @@ class StateStore:
         except (OSError, ValueError, TypeError) as exc:
             raise RuntimeError(f"cannot read state file {self.path}: {exc}") from exc
         if state.trading_date != trading_date:
+            if state.phase.value in {"entry_pending", "open", "exit_pending"}:
+                raise RuntimeError(
+                    f"state from {state.trading_date} is still {state.phase.value}; "
+                    "manual Alpaca reconciliation is required before daily reset"
+                )
             return DailyState(trading_date=trading_date)
         return state
 
@@ -32,4 +37,3 @@ class StateStore:
         )
         os.chmod(temporary, 0o600)
         os.replace(temporary, self.path)
-

@@ -25,6 +25,9 @@ class FakeAlpaca:
     def clock(self):
         return {"is_open": True, "next_close": self.now.replace(hour=16).isoformat()}
 
+    def calendar_day(self, _date):
+        return {"date": "2026-08-18", "open": "09:30", "close": "16:00"}
+
     def account(self):
         return {"trading_blocked": False, "options_trading_level": 3, "equity": "5000"}
 
@@ -187,3 +190,30 @@ def test_hard_close_uses_market_order(config):
     state = bot.store.load("2026-08-18")
     assert state.exit_reason == "hard_close"
     assert fake.submissions[0]["price"] is None
+
+
+def test_early_close_moves_hard_close_to_noon(config):
+    now = datetime(2026, 8, 18, 12, 0, tzinfo=ET)
+    config = replace(config, dry_run=False)
+    fake = FakeAlpaca(now)
+    fake.calendar_day = lambda _date: {
+        "date": "2026-08-18",
+        "open": "09:30",
+        "close": "13:00",
+    }
+    bot = engine(config, fake)
+    bot.store.save(
+        DailyState(
+            "2026-08-18",
+            phase=Phase.OPEN,
+            short_symbol="short",
+            long_symbol="long",
+            short_strike="535",
+            long_strike="534",
+            quantity=1,
+            entry_credit="0.50",
+            entry_submissions=1,
+        )
+    )
+    bot.tick(now)
+    assert bot.store.load("2026-08-18").exit_reason == "hard_close"

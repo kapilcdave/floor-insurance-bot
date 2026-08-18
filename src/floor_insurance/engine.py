@@ -23,6 +23,10 @@ LOG = logging.getLogger(__name__)
 TERMINAL_FAILURES = {"canceled", "expired", "rejected", "replaced", "suspended"}
 
 
+class SubmissionRejected(RuntimeError):
+    """The broker definitively rejected an order before acceptance."""
+
+
 def _time(value: str) -> time:
     try:
         return time.fromisoformat(value)
@@ -43,6 +47,7 @@ class TradingEngine:
         self.store = store
         self.notifier = notifier
         self.tz = ZoneInfo(config.timezone)
+        self._calendar_cache: dict[str, dict | None] = {}
 
     def tick(self, now: datetime | None = None) -> int:
         now = (now or datetime.now(self.tz)).astimezone(self.tz)
@@ -74,11 +79,24 @@ class TradingEngine:
 
     def _hard_close(self, now: datetime, clock: dict) -> time:
         configured = _time(self.config.hard_close_time)
-        if not clock.get("is_open"):
+        trading_date = now.date().isoformat()
+        if trading_date not in self._calendar_cache:
+            self._calendar_cache[trading_date] = self.alpaca.calendar_day(trading_date)
+        session = self._calendar_cache[trading_date]
+        if session:
+            close_value = str(session["close"])
+            if "T" in close_value:
+                close_at = datetime.fromisoformat(close_value.replace("Z", "+00:00")).astimezone(
+                    self.tz
+                )
+            else:
+                close_at = datetime.combine(now.date(), _time(close_value), self.tz)
+        elif clock.get("is_open"):
+            close_at = datetime.fromisoformat(
+                clock["next_close"].replace("Z", "+00:00")
+            ).astimezone(self.tz)
+        else:
             return configured
-        close_at = datetime.fromisoformat(clock["next_close"].replace("Z", "+00:00")).astimezone(
-            self.tz
-        )
         one_hour_before = (close_at - timedelta(hours=1)).time().replace(tzinfo=None)
         return min(configured, one_hour_before)
 
@@ -150,12 +168,18 @@ class TradingEngine:
             )
             return
 
-        order = self._submit_or_reconcile(
-            state,
-            opening=True,
-            price=credit,
-            client_id=client_id,
-        )
+        try:
+            order = self._submit_or_reconcile(
+                state,
+                opening=True,
+                price=credit,
+                client_id=client_id,
+            )
+        except SubmissionRejected as exc:
+            self._clear_trade(state)
+            self._finish(state, now, f"entry rejected: {exc}")
+            self.notifier.send(f"Entry rejected by Alpaca: {exc}")
+            return
         if order:
             state.active_order_id = order["id"]
             state.event("entry submitted", now, order_id=order["id"])
@@ -181,7 +205,9 @@ class TradingEngine:
                 opening=opening,
                 client_order_id=client_id,
             )
-        except AlpacaError:
+        except AlpacaError as exc:
+            if exc.status_code is not None and 400 <= exc.status_code < 500 and exc.status_code not in {408, 429}:
+                raise SubmissionRejected(str(exc)) from exc
             LOG.exception("order submission returned an error; reconciling by client ID")
             order = self.alpaca.order_by_client_id(client_id)
             if order:
@@ -289,9 +315,19 @@ class TradingEngine:
         state.phase = Phase.EXIT_PENDING
         state.event("exit prepared", now, reason=reason, price=str(price) if price else "market")
         self.store.save(state)
-        order = self._submit_or_reconcile(
-            state, opening=False, price=price, client_id=client_id
-        )
+        try:
+            order = self._submit_or_reconcile(
+                state, opening=False, price=price, client_id=client_id
+            )
+        except SubmissionRejected as exc:
+            state.phase = Phase.OPEN
+            state.active_order_id = None
+            state.active_client_order_id = None
+            state.event("exit rejected; position remains open", now, reason=reason)
+            self.notifier.send(
+                f"CRITICAL: Alpaca rejected the {reason} exit; position remains open: {exc}"
+            )
+            return
         if order:
             state.active_order_id = order["id"]
             state.event("exit submitted", now, reason=reason, order_id=order["id"])
