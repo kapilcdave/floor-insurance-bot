@@ -42,15 +42,177 @@ It then manages the filled spread until one of these events:
 - three emergency-stop losses: finish for the day;
 - 15:00 ET: cancel working orders, flatten the bot-owned spread, and finish.
 
-The bot only manages orders and positions bearing its `floor-insurance-*`
-client-order ID prefix. It does not flatten unrelated account positions.
+The bot submits every spread as one atomic Alpaca multi-leg order and uses a
+`floor-insurance-*` client-order ID for crash reconciliation. It never calls an
+account-wide flatten endpoint.
 
-## Status
+The default `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry
+after a stop. You can raise it to three to reproduce the draft circuit breaker,
+but do that only after separately validating re-entry behavior.
 
-The implementation is being built commit-by-commit. Paper trading remains the
-default and live trading requires an explicit two-part opt-in.
+## Requirements
+
+- Python 3.11+
+- an Alpaca account with options trading level 3 (spreads)
+- paper keys for initial operation
+- OPRA options + SIP stock data before any live consideration
+- optional Telegram bot token and chat ID
+
+Alpaca's free indicative options feed does not contain actual OPRA quotes. It
+is allowed only in paper mode here. Alpaca also does not return Greeks for 0DTE
+contracts, so this strategy does not depend on delta.
+
+## Install and paper-test
+
+```bash
+python3.11 -m venv .venv
+.venv/bin/pip install -e '.[dev]'
+cp .env.example .env
+set -a; source .env; set +a
+
+# Verify account permissions and feeds.
+.venv/bin/floor-insurance doctor
+
+# Evaluate one tick without submitting an order (DRY_RUN=true).
+.venv/bin/floor-insurance once
+
+# Run continuously. Set DRY_RUN=false only with paper credentials first.
+.venv/bin/floor-insurance run
+```
+
+The app does not automatically load `.env`; systemd loads its environment file,
+and an interactive shell must export it as shown above. State is written
+atomically with mode `0600`.
+
+Useful commands:
+
+```bash
+.venv/bin/floor-insurance state
+.venv/bin/pytest --cov=floor_insurance
+```
+
+## Telegram
+
+Create a bot with BotFather, send that bot a message, determine the chat ID, and
+set `TELEGRAM_BOT_TOKEN` plus `TELEGRAM_CHAT_ID`. Telegram failure never blocks
+order management; the error is sent to the local log.
+
+## Backtesting without fooling ourselves
+
+The backtester requires contemporaneous bid/ask quotes for both option legs and
+the SPY price. Stock-only or option-close-only data cannot honestly test the
+entry credit, 50% take profit, or exit slippage.
+
+Prepared input is a CSV with one row per observation and these columns:
+
+```text
+timestamp,underlying,short_strike,long_strike,short_bid,short_ask,long_bid,long_ask
+```
+
+Timestamps must include an offset. Each day's file rows must represent the
+spread selected from information available at entry—do not select strikes using
+the day's eventual low or close. Alpaca's historical options data starts in
+February 2024; use OPRA rather than the free indicative feed for research meant
+to resemble execution.
+
+```bash
+floor-insurance-backtest data/prepared_spreads.csv \
+  --starting-equity 5000 \
+  --fees-per-spread 0.06
+```
+
+The default report reveals only the first 60% training period and next 20%
+validation period. Tune on those, write down and freeze the configuration, then
+run exactly once with `--reveal-oos` to see the final chronological 20%.
+
+This harness uses conservative executable prices: short bid minus long ask on
+entry, then short ask minus long bid on exit. It currently tests one entry per
+day. Synthetic tests verify the math and event ordering; they are not evidence
+of profitability. No real backtest result is bundled because this repository
+does not have access to a licensed historical OPRA dataset.
+
+Do not add a futures/momentum regime switch until it improves validation data
+after fees and slippage, and do not repeatedly inspect the held-out segment.
+Overnight futures direction alone is not a demonstrated edge.
+
+## Existing VPS deployment (no provisioning)
+
+The repository does not create cloud resources. On an existing Debian/Ubuntu
+VPS, place the checkout at `/opt/floor-insurance-bot`, create a non-login
+`floorbot` user, install its virtual environment, copy `.env.example` to
+`/etc/floor-insurance-bot.env`, and put persistent state under
+`/var/lib/floor-insurance-bot`:
+
+```bash
+sudo useradd --system --home /opt/floor-insurance-bot --shell /usr/sbin/nologin floorbot
+sudo mkdir -p /var/lib/floor-insurance-bot
+sudo chown floorbot:floorbot /var/lib/floor-insurance-bot
+sudo chmod 700 /var/lib/floor-insurance-bot
+
+sudo cp deploy/floor-insurance.service /etc/systemd/system/
+sudo chmod 600 /etc/floor-insurance-bot.env
+sudo systemctl daemon-reload
+sudo systemctl enable --now floor-insurance
+sudo journalctl -u floor-insurance -f
+```
+
+Set `STATE_PATH=/var/lib/floor-insurance-bot/daily.json` in the environment
+file. The systemd unit caps memory at 256 MB and grants write access only to the
+state directory. The runtime itself normally uses far less than the available
+1 GB; no pandas, ML framework, database, or charting stack is installed.
+
+## REST polling versus WebSockets
+
+Open positions poll every 15 seconds by default, not every five minutes. REST is
+kept as the initial implementation because retry, freshness, and recovery are
+easy to audit. Alpaca's options WebSocket uses MessagePack and requires robust
+reconnect/resubscribe plus a stale-stream watchdog. Streaming is a sensible
+second phase after paper soak testing, with REST retained as the fallback.
+
+## Failure behavior
+
+- GET requests retry transient errors with bounded backoff.
+- POST requests are never blindly retried. On an ambiguous response the bot
+  reconciles by deterministic client-order ID; if still unknown it alerts and
+  refuses to duplicate the order.
+- Quotes older than `MAX_QUOTE_AGE_SECONDS` block a decision.
+- Working take-profit entries are canceled and replaced by a market multi-leg
+  exit at the hard close.
+- Early-close sessions move the hard close to one hour before the exchange's
+  reported close.
+- Daily state resets by New York trading date, not by the VPS's Iowa timezone.
+
+## Live-trading interlock
+
+Live mode is deliberately awkward. All four values are required:
+
+```text
+ALPACA_PAPER=false
+LIVE_TRADING_CONFIRMED=true
+STOCK_FEED=sip
+OPTIONS_FEED=opra
+```
+
+Even then, paper-soak the exact deployed commit first. Supervise the bot and
+keep broker access available for manual flattening. Assignment, pin risk,
+market halts, rejected exits, bad data, and exchange/broker outages cannot be
+eliminated in software.
+
+## Project layout
+
+```text
+src/floor_insurance/  REST client, strategy, state machine, CLI, backtester
+tests/                deterministic unit and lifecycle tests
+deploy/               hardened systemd unit for an existing VPS
+.github/workflows/    Python 3.11-3.13 CI
+```
+
+## Status and non-goals
+
+Paper trading remains the default. This project does not promise a return,
+provision infrastructure, scrape unlicensed options history, or infer an edge
+from an AI-generated win-rate claim.
 
 ## License
 
 MIT
-

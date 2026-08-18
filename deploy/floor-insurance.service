@@ -1,0 +1,29 @@
+[Unit]
+Description=Floor Insurance 0DTE SPY paper-trading bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=floorbot
+Group=floorbot
+WorkingDirectory=/opt/floor-insurance-bot
+EnvironmentFile=/etc/floor-insurance-bot.env
+ExecStart=/opt/floor-insurance-bot/.venv/bin/floor-insurance run
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=20
+
+# Keep this tiny service contained on a 1 GB host.
+MemoryMax=256M
+TasksMax=64
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/floor-insurance-bot
+
+[Install]
+WantedBy=multi-user.target
+
