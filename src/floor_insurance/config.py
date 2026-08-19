@@ -54,6 +54,7 @@ class Config:
     risk_fraction: Decimal
     take_profit_fraction: Decimal
     min_credit: Decimal
+    shadow_min_credit: Decimal
     max_contracts: int
     max_daily_entries: int
     max_daily_losses: int
@@ -79,6 +80,7 @@ class Config:
     def from_env(cls, *, require_credentials: bool = True) -> "Config":
         paper = _bool("ALPACA_PAPER", True)
         live_confirmed = _bool("LIVE_TRADING_CONFIRMED", False)
+        options_feed = os.getenv("OPTIONS_FEED", "indicative").strip().lower()
         api_key = os.getenv("ALPACA_API_KEY", "").strip()
         api_secret = os.getenv("ALPACA_API_SECRET", "").strip()
         trading_default = (
@@ -98,7 +100,7 @@ class Config:
             stock_feed=os.getenv(
                 "STOCK_FEED", "iex" if paper else "sip"
             ).strip().lower(),
-            options_feed=os.getenv("OPTIONS_FEED", "indicative").strip().lower(),
+            options_feed=options_feed,
             symbol=os.getenv("UNDERLYING", "SPY").strip().upper(),
             buffer_dollars=_decimal("BUFFER_DOLLARS", "15"),
             spread_width=_decimal("SPREAD_WIDTH", "1"),
@@ -106,13 +108,16 @@ class Config:
             risk_fraction=_decimal("RISK_FRACTION", "0.01"),
             take_profit_fraction=_decimal("TAKE_PROFIT_FRACTION", "0.50"),
             min_credit=_decimal("MIN_CREDIT", "0.05"),
+            shadow_min_credit=_decimal("SHADOW_MIN_CREDIT", "0.01"),
             max_contracts=_int("MAX_CONTRACTS", 10),
             max_daily_entries=_int("MAX_DAILY_ENTRIES", 1),
             max_daily_losses=_int("MAX_DAILY_LOSSES", 3),
             poll_seconds_idle=_int("POLL_SECONDS_IDLE", 60),
             poll_seconds_open=_int("POLL_SECONDS_OPEN", 15),
             request_timeout_seconds=_int("REQUEST_TIMEOUT_SECONDS", 10),
-            max_quote_age_seconds=_int("MAX_QUOTE_AGE_SECONDS", 30),
+            max_quote_age_seconds=_int(
+                "MAX_QUOTE_AGE_SECONDS", 90 if options_feed == "indicative" else 30
+            ),
             entry_time=os.getenv("ENTRY_TIME_ET", "09:45"),
             entry_cutoff_time=os.getenv("ENTRY_CUTOFF_TIME_ET", "14:00"),
             take_profit_cutoff_time=os.getenv("TAKE_PROFIT_CUTOFF_TIME_ET", "14:00"),
@@ -161,6 +166,10 @@ class Config:
             raise ConfigError("spread width, strike buffer, and stop buffer must be positive")
         if not (Decimal("0") < self.min_credit < self.spread_width):
             raise ConfigError("MIN_CREDIT must be positive and below SPREAD_WIDTH")
+        if not (Decimal("0") < self.shadow_min_credit < self.spread_width):
+            raise ConfigError(
+                "SHADOW_MIN_CREDIT must be positive and below SPREAD_WIDTH"
+            )
         if not (Decimal("0") < self.risk_fraction <= Decimal("0.05")):
             raise ConfigError("RISK_FRACTION must be greater than 0 and at most 0.05")
         if not (Decimal("0") < self.take_profit_fraction < Decimal("1")):

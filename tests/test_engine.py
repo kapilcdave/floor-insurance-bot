@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
+
+import pytest
 
 from floor_insurance.engine import TradingEngine
 from floor_insurance.models import Contract, DailyState, Phase, Quote
 from floor_insurance.notify import Notifier
 from floor_insurance.state import StateStore
+from floor_insurance.strategy import StrategySkip
 
 ET = ZoneInfo("America/New_York")
 
@@ -256,6 +259,44 @@ def test_shadow_mode_tracks_virtual_trade_without_submitting_order(config):
     assert summary["entries_without_exit"] == 0
     assert summary["wins"] == 1
     assert summary["total_net_pnl"] == "28.00"
+
+
+def test_shadow_mode_accepts_penny_credit_and_small_timestamp_skew(config):
+    entered = datetime(2026, 8, 18, 9, 45, tzinfo=ET)
+    config = replace(
+        config,
+        dry_run=False,
+        shadow_mode=True,
+        max_quote_age_seconds=90,
+        shadow_log_path=config.state_path.with_name("shadow-penny.jsonl"),
+    )
+    fake = FakeAlpaca(entered)
+    fake.now = entered + timedelta(seconds=65)
+    fake.short_quote = Quote(
+        Decimal("0.03"), Decimal("0.04"), entered - timedelta(seconds=37)
+    )
+    fake.long_quote = Quote(
+        Decimal("0"), Decimal("0.01"), entered - timedelta(seconds=34)
+    )
+
+    bot = engine(config, fake)
+    bot.tick(entered)
+
+    state = bot.store.load("2026-08-18")
+    assert state.phase == Phase.OPEN
+    assert state.shadow is True
+    assert state.entry_credit == "0.02"
+    assert fake.submissions == []
+
+
+def test_timestamp_beyond_configured_skew_is_rejected(config):
+    entered = datetime(2026, 8, 18, 9, 45, tzinfo=ET)
+    config = replace(config, max_quote_age_seconds=90)
+    fake = FakeAlpaca(entered)
+    fake.now = entered + timedelta(seconds=91)
+
+    with pytest.raises(StrategySkip, match="ahead of the bot clock"):
+        engine(config, fake).tick(entered)
 
 
 def test_shadow_stop_has_priority_and_applies_modeled_fees(config):

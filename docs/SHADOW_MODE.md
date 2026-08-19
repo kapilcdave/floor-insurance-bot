@@ -18,7 +18,9 @@ STOCK_FEED=sip
 # A hypothetical portfolio used only for sizing.
 SHADOW_EQUITY=10000
 SHADOW_FEES_PER_SPREAD=0
+SHADOW_MIN_CREDIT=0.01
 SHADOW_LOG_PATH=state/shadow_events.jsonl
+MAX_QUOTE_AGE_SECONDS=90
 ```
 
 `SHADOW_EQUITY=10000` normally permits one $1-wide contract under the 1% rule
@@ -28,6 +30,13 @@ $50. Shadow equity never changes an Alpaca balance.
 
 `SHADOW_FEES_PER_SPREAD` is a configurable round-trip estimate. Keep it at zero
 only if you deliberately want gross P&L.
+
+`SHADOW_MIN_CREDIT` is separate from the live `MIN_CREDIT` guard. The default
+allows shadow mode to exercise the lifecycle on a one-cent executable credit,
+while real dry-run or order modes continue to require `MIN_CREDIT`. A zero or
+negative executable credit is always rejected. The 90-second quote-age setting
+matches the slower free indicative feed; use a tighter value such as 30 seconds
+with a real-time OPRA entitlement.
 
 ## Run
 

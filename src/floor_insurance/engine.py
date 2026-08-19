@@ -131,9 +131,18 @@ class TradingEngine:
         self._require_fresh(quotes[short.symbol].timestamp, now, "short option quote")
         self._require_fresh(quotes[long.symbol].timestamp, now, "long option quote")
         credit = executable_credit(quotes[short.symbol], quotes[long.symbol])
-        if credit < self.config.min_credit:
+        min_credit = (
+            self.config.shadow_min_credit
+            if self.config.shadow_mode
+            else self.config.min_credit
+        )
+        if credit < min_credit:
+            threshold_name = (
+                "SHADOW_MIN_CREDIT" if self.config.shadow_mode else "MIN_CREDIT"
+            )
             raise StrategySkip(
-                f"executable credit ${credit:.2f} is below MIN_CREDIT ${self.config.min_credit:.2f}"
+                f"executable credit ${credit:.2f} is below "
+                f"{threshold_name} ${min_credit:.2f}"
             )
         sizing_equity = (
             self.config.shadow_equity
@@ -525,8 +534,14 @@ class TradingEngine:
 
     def _require_fresh(self, observed: datetime, now: datetime, label: str) -> None:
         age = now.astimezone(ZoneInfo("UTC")) - observed.astimezone(ZoneInfo("UTC"))
-        if age.total_seconds() < -5 or age.total_seconds() > self.config.max_quote_age_seconds:
-            raise StrategySkip(f"{label} is stale ({age.total_seconds():.0f}s old)")
+        age_seconds = age.total_seconds()
+        max_age = self.config.max_quote_age_seconds
+        if abs(age_seconds) > max_age:
+            if age_seconds < 0:
+                raise StrategySkip(
+                    f"{label} timestamp is {abs(age_seconds):.0f}s ahead of the bot clock"
+                )
+            raise StrategySkip(f"{label} is stale ({age_seconds:.0f}s old)")
 
     def _clear_trade(self, state: DailyState) -> None:
         state.short_symbol = None
