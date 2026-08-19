@@ -57,7 +57,17 @@ def size_contracts(
 ) -> int:
     if equity <= 0:
         raise StrategySkip("account equity is not positive")
-    risk_budget = equity * risk_fraction
+    return size_contracts_for_budget(equity * risk_fraction, width, credit, cap)
+
+
+def size_contracts_for_budget(
+    risk_budget: Decimal,
+    width: Decimal,
+    credit: Decimal,
+    cap: int,
+) -> int:
+    if risk_budget <= 0:
+        raise StrategySkip("risk budget is not positive")
     per_contract = max_loss_per_contract(width, credit)
     quantity = int((risk_budget / per_contract).to_integral_value(rounding=ROUND_FLOOR))
     if quantity < 1:
@@ -65,4 +75,3 @@ def size_contracts(
             f"risk budget ${risk_budget:.2f} is below ${per_contract:.2f} max loss per spread"
         )
     return min(quantity, cap)
-

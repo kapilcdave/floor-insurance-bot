@@ -19,6 +19,7 @@ from .strategy import (
     max_loss_per_contract,
     select_spread,
     size_contracts,
+    size_contracts_for_budget,
 )
 
 LOG = logging.getLogger(__name__)
@@ -121,8 +122,8 @@ class TradingEngine:
             self._finish(state, now, f"options level {level}; level 3 is required for spreads")
             return
 
-        price, trade_at = self.alpaca.latest_underlying_trade()
-        self._require_fresh(trade_at, now, "SPY trade")
+        price, trade_at = self.alpaca.latest_underlying_trade(now.date().isoformat())
+        self._require_fresh(trade_at, now, f"{self.config.symbol} reference")
         contracts = self.alpaca.put_contracts(now.date().isoformat())
         short, long = select_spread(
             contracts, price, self.config.buffer_dollars, self.config.spread_width
@@ -149,13 +150,23 @@ class TradingEngine:
             if self.config.shadow_mode
             else Decimal(str(account["equity"]))
         )
-        quantity = size_contracts(
-            sizing_equity,
-            self.config.risk_fraction,
-            self.config.spread_width,
-            credit,
-            self.config.max_contracts,
-        )
+        if self.config.risk_budget_dollars is None:
+            quantity = size_contracts(
+                sizing_equity,
+                self.config.risk_fraction,
+                self.config.spread_width,
+                credit,
+                self.config.max_contracts,
+            )
+            risk_budget = sizing_equity * self.config.risk_fraction
+        else:
+            risk_budget = min(self.config.risk_budget_dollars, sizing_equity)
+            quantity = size_contracts_for_budget(
+                risk_budget,
+                self.config.spread_width,
+                credit,
+                self.config.max_contracts,
+            )
 
         state.short_symbol = short.symbol
         state.long_symbol = long.symbol
@@ -167,7 +178,7 @@ class TradingEngine:
         state.event(
             "entry prepared",
             now,
-            spy=str(price),
+            underlying=str(price),
             short=str(short.strike),
             long=str(long.strike),
             credit=str(credit),
@@ -198,6 +209,7 @@ class TradingEngine:
                 feed=self.config.options_feed,
                 modeled_equity=sizing_equity,
                 risk_fraction=self.config.risk_fraction,
+                risk_budget=risk_budget,
                 underlying=price,
                 short_symbol=short.symbol,
                 short_strike=short.strike,
@@ -212,7 +224,8 @@ class TradingEngine:
                 max_loss_per_contract=per_contract_risk,
             )
             self.notifier.send(
-                f"SHADOW entry: {quantity}x SPY {short.strike}/{long.strike} "
+                f"SHADOW entry: {quantity}x {self.config.symbol} "
+                f"{short.strike}/{long.strike} "
                 f"at ${credit} modeled credit; no order sent."
             )
             return
@@ -220,7 +233,8 @@ class TradingEngine:
         if self.config.dry_run:
             self._finish(state, now, "dry run: valid entry found; no order submitted")
             self.notifier.send(
-                f"DRY RUN: {quantity}x SPY {short.strike}/{long.strike} put spread "
+                f"DRY RUN: {quantity}x {self.config.symbol} "
+                f"{short.strike}/{long.strike} put spread "
                 f"at ${credit} credit; no order sent."
             )
             return
@@ -245,7 +259,8 @@ class TradingEngine:
             state.active_order_id = order["id"]
             state.event("entry submitted", now, order_id=order["id"])
             self.notifier.send(
-                f"Entry submitted: {quantity}x SPY {short.strike}/{long.strike} put "
+                f"Entry submitted: {quantity}x {self.config.symbol} "
+                f"{short.strike}/{long.strike} put "
                 f"spread, limit ${credit} credit."
             )
 
@@ -347,8 +362,8 @@ class TradingEngine:
             self._submit_exit(state, now, "hard_close", price=None)
             return
 
-        price, trade_at = self.alpaca.latest_underlying_trade()
-        self._require_fresh(trade_at, now, "SPY trade")
+        price, trade_at = self.alpaca.latest_underlying_trade(now.date().isoformat())
+        self._require_fresh(trade_at, now, f"{self.config.symbol} reference")
         short_strike = Decimal(state.short_strike or "0")
         if price <= short_strike + self.config.stop_buffer:
             self._submit_exit(state, now, "emergency_stop", price=None)
@@ -371,8 +386,8 @@ class TradingEngine:
     def _manage_shadow_open(
         self, state: DailyState, now: datetime, hard_close: time
     ) -> None:
-        price, trade_at = self.alpaca.latest_underlying_trade()
-        self._require_fresh(trade_at, now, "SPY trade")
+        price, trade_at = self.alpaca.latest_underlying_trade(now.date().isoformat())
+        self._require_fresh(trade_at, now, f"{self.config.symbol} reference")
         quotes = self.alpaca.option_quotes(
             [state.short_symbol or "", state.long_symbol or ""]
         )

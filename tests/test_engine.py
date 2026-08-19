@@ -34,7 +34,7 @@ class FakeAlpaca:
     def account(self):
         return {"trading_blocked": False, "options_trading_level": 3, "equity": "5000"}
 
-    def latest_underlying_trade(self):
+    def latest_underlying_trade(self, _expiration_date=None):
         return self.price, self.now
 
     def put_contracts(self, _date):
@@ -259,6 +259,31 @@ def test_shadow_mode_tracks_virtual_trade_without_submitting_order(config):
     assert summary["entries_without_exit"] == 0
     assert summary["wins"] == 1
     assert summary["total_net_pnl"] == "28.00"
+
+
+def test_absolute_risk_budget_sizes_one_spread(config):
+    entered = datetime(2026, 8, 18, 9, 45, tzinfo=ET)
+    config = replace(
+        config,
+        dry_run=False,
+        shadow_mode=True,
+        symbol="XSP",
+        risk_budget_dollars=Decimal("100"),
+        shadow_equity=Decimal("100"),
+        max_contracts=1,
+        shadow_log_path=config.state_path.with_name("xsp-shadow.jsonl"),
+    )
+    fake = FakeAlpaca(entered)
+    fake.short_quote = Quote(Decimal("0.08"), Decimal("0.09"), entered)
+    fake.long_quote = Quote(Decimal("0.02"), Decimal("0.03"), entered)
+
+    bot = engine(config, fake)
+    bot.tick(entered)
+
+    state = bot.store.load("2026-08-18")
+    assert state.phase == Phase.OPEN
+    assert state.quantity == 1
+    assert state.event_history[-1]["max_loss_per_contract"] == "95.00"
 
 
 def test_shadow_mode_accepts_penny_credit_and_small_timestamp_skew(config):

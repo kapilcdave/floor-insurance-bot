@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "floor-insurance-bot"
 version = "0.4.0"
-description = "Resource-light 0DTE SPY strategy research and Alpaca bot"
+description = "Resource-light 0DTE credit-spread research and Alpaca bot"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}

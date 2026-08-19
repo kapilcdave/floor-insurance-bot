@@ -22,9 +22,27 @@ def test_live_trading_requires_consolidated_feeds(config):
         replace(config, paper=False, live_confirmed=True).validate()
 
 
-def test_underlying_is_pinned_to_spy(config):
-    with pytest.raises(ConfigError, match="must be SPY"):
+def test_underlying_allows_xsp_paper_and_rejects_other_symbols(config):
+    replace(config, symbol="XSP").validate()
+    with pytest.raises(ConfigError, match="must be SPY or XSP"):
         replace(config, symbol="NBIS").validate()
+
+
+def test_xsp_live_trading_is_blocked(config):
+    with pytest.raises(ConfigError, match="XSP only in paper"):
+        replace(
+            config,
+            symbol="XSP",
+            paper=False,
+            live_confirmed=True,
+            options_feed="opra",
+            stock_feed="sip",
+        ).validate()
+
+
+def test_absolute_risk_budget_must_be_positive(config):
+    with pytest.raises(ConfigError, match="RISK_BUDGET_DOLLARS"):
+        replace(config, risk_budget_dollars=Decimal("0")).validate()
 
 
 def test_dry_run_and_shadow_mode_are_mutually_exclusive(config):
@@ -46,3 +64,12 @@ def test_minimum_viable_equity_exposes_the_silent_no_op(config):
     assert replace(
         config, spread_width=Decimal("5"), min_credit=Decimal("0.40")
     ).minimum_viable_equity() == Decimal("46000.00")
+    assert replace(
+        config, risk_budget_dollars=Decimal("100")
+    ).minimum_viable_equity() == Decimal("95.00")
+    assert replace(
+        config,
+        dry_run=False,
+        shadow_mode=True,
+        risk_budget_dollars=Decimal("100"),
+    ).minimum_viable_equity() == Decimal("99.00")

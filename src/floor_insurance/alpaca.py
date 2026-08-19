@@ -4,6 +4,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from decimal import Decimal
+from statistics import median
 from typing import Any
 
 import requests
@@ -94,7 +95,13 @@ class AlpacaClient:
         )
         return days[0] if days else None
 
-    def latest_underlying_trade(self) -> tuple[Decimal, datetime]:
+    def latest_underlying_trade(
+        self, expiration_date: str | None = None
+    ) -> tuple[Decimal, datetime]:
+        if self.config.symbol == "XSP":
+            if not expiration_date:
+                raise AlpacaError("XSP reference price requires an expiration date")
+            return self.synthetic_xsp_price(expiration_date)
         data = self._request(
             "GET",
             self.config.data_base_url,
@@ -103,6 +110,72 @@ class AlpacaClient:
         )
         trade = data["trade"]
         return Decimal(str(trade["p"])), _timestamp(trade["t"])
+
+    def synthetic_xsp_price(self, expiration_date: str) -> tuple[Decimal, datetime]:
+        """Derive a 0DTE XSP reference from executable call/put midpoints.
+
+        Alpaca paper accounts can trade XSP but may not have the index-values
+        data grant. At expiry, call-put parity is approximately S = K + C - P.
+        Taking the median of the five pairs nearest the money limits the effect
+        of one bad indicative quote.
+        """
+
+        calls = self._option_chain_quotes(expiration_date, "call")
+        puts = self._option_chain_quotes(expiration_date, "put")
+        candidates: list[tuple[Decimal, Decimal, datetime]] = []
+        for strike in calls.keys() & puts.keys():
+            call = calls[strike]
+            put = puts[strike]
+            call_mid = (call.bid + call.ask) / Decimal("2")
+            put_mid = (put.bid + put.ask) / Decimal("2")
+            synthetic = strike + call_mid - put_mid
+            timestamp = min(call.timestamp, put.timestamp)
+            candidates.append((abs(call_mid - put_mid), synthetic, timestamp))
+        if not candidates:
+            raise AlpacaError("no matched XSP call/put quotes available for parity pricing")
+        selected = sorted(candidates, key=lambda item: item[0])[:5]
+        price = Decimal(str(median([item[1] for item in selected])))
+        observed_at = min(item[2] for item in selected)
+        return price.quantize(Decimal("0.001")), observed_at
+
+    def _option_chain_quotes(
+        self, expiration_date: str, option_type: str
+    ) -> dict[Decimal, Quote]:
+        params: dict[str, Any] = {
+            "feed": self.config.options_feed,
+            "expiration_date": expiration_date,
+            "type": option_type,
+            "limit": 1000,
+        }
+        quotes: dict[Decimal, Quote] = {}
+        while True:
+            data = self._request(
+                "GET",
+                self.config.data_base_url,
+                f"/v1beta1/options/snapshots/{self.config.symbol}",
+                params=params,
+            )
+            for symbol, snapshot in data.get("snapshots", {}).items():
+                latest = snapshot.get("latestQuote")
+                if not latest:
+                    continue
+                bid = Decimal(str(latest["bp"]))
+                ask = Decimal(str(latest["ap"]))
+                if bid < 0 or ask <= 0 or ask < bid:
+                    continue
+                try:
+                    strike = Decimal(symbol[-8:]) / Decimal("1000")
+                except Exception:
+                    LOG.warning("ignored malformed option symbol %s", symbol)
+                    continue
+                quote = Quote(bid=bid, ask=ask, timestamp=_timestamp(latest["t"]))
+                existing = quotes.get(strike)
+                if existing is None or quote.timestamp > existing.timestamp:
+                    quotes[strike] = quote
+            token = data.get("next_page_token")
+            if not token:
+                return quotes
+            params["page_token"] = token
 
     def put_contracts(self, expiration_date: str) -> list[Contract]:
         params: dict[str, Any] = {

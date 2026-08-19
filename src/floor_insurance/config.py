@@ -37,6 +37,16 @@ def _decimal(name: str, default: str) -> Decimal:
         raise ConfigError(f"{name} must be a decimal number") from exc
 
 
+def _optional_decimal(name: str) -> Decimal | None:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return None
+    try:
+        return Decimal(raw)
+    except Exception as exc:
+        raise ConfigError(f"{name} must be a decimal number") from exc
+
+
 @dataclass(frozen=True)
 class Config:
     api_key: str
@@ -52,6 +62,7 @@ class Config:
     spread_width: Decimal
     stop_buffer: Decimal
     risk_fraction: Decimal
+    risk_budget_dollars: Decimal | None
     take_profit_fraction: Decimal
     min_credit: Decimal
     shadow_min_credit: Decimal
@@ -106,6 +117,7 @@ class Config:
             spread_width=_decimal("SPREAD_WIDTH", "1"),
             stop_buffer=_decimal("STOP_BUFFER", "3"),
             risk_fraction=_decimal("RISK_FRACTION", "0.01"),
+            risk_budget_dollars=_optional_decimal("RISK_BUDGET_DOLLARS"),
             take_profit_fraction=_decimal("TAKE_PROFIT_FRACTION", "0.50"),
             min_credit=_decimal("MIN_CREDIT", "0.05"),
             shadow_min_credit=_decimal("SHADOW_MIN_CREDIT", "0.01"),
@@ -143,10 +155,14 @@ class Config:
         The risk rule sizes from the maximum loss, which is nearly the full
         spread width. A $1-wide spread sold for the $0.05 minimum therefore
         risks $95, so a 1% risk fraction cannot fund a single contract below
-        $9,500. Below this balance the bot is a silent no-op: every tick skips.
+        $9,500. With an absolute risk budget, the minimum is instead the
+        spread's maximum loss. Below this balance every entry safely skips.
         """
 
-        worst_case = (self.spread_width - self.min_credit) * Decimal("100")
+        credit_floor = self.shadow_min_credit if self.shadow_mode else self.min_credit
+        worst_case = (self.spread_width - credit_floor) * Decimal("100")
+        if self.risk_budget_dollars is not None:
+            return worst_case.quantize(Decimal("0.01"))
         return (worst_case / self.risk_fraction).quantize(Decimal("0.01"))
 
     def validate(self, *, require_credentials: bool = True) -> None:
@@ -161,8 +177,13 @@ class Config:
             )
         if self.shadow_log_path == self.state_path:
             raise ConfigError("SHADOW_LOG_PATH and STATE_PATH must be different files")
-        if self.symbol != "SPY":
-            raise ConfigError("UNDERLYING must be SPY for this bot")
+        if self.symbol not in {"SPY", "XSP"}:
+            raise ConfigError("UNDERLYING must be SPY or XSP")
+        if self.symbol == "XSP" and not self.paper:
+            raise ConfigError(
+                "live XSP trading is blocked: Alpaca retail currently supports "
+                "XSP only in paper trading"
+            )
         if not self.paper and not self.live_confirmed:
             raise ConfigError(
                 "live endpoint blocked: set LIVE_TRADING_CONFIRMED=true as a second opt-in"
@@ -185,6 +206,8 @@ class Config:
             )
         if not (Decimal("0") < self.risk_fraction <= Decimal("0.05")):
             raise ConfigError("RISK_FRACTION must be greater than 0 and at most 0.05")
+        if self.risk_budget_dollars is not None and self.risk_budget_dollars <= 0:
+            raise ConfigError("RISK_BUDGET_DOLLARS must be positive when configured")
         if not (Decimal("0") < self.take_profit_fraction < Decimal("1")):
             raise ConfigError("TAKE_PROFIT_FRACTION must be between 0 and 1")
         if min(self.max_contracts, self.max_daily_entries, self.max_daily_losses) < 1:

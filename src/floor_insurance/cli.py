@@ -22,7 +22,7 @@ LOG = logging.getLogger(__name__)
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="0DTE SPY floor-insurance bot")
+    parser = argparse.ArgumentParser(description="0DTE credit-spread bot")
     parser.add_argument(
         "command",
         nargs="?",
@@ -91,6 +91,11 @@ def doctor(config: Config, alpaca: AlpacaClient) -> int:
         "options_feed": config.options_feed,
         "telegram_configured": bool(config.telegram_token and config.telegram_chat_id),
         "sizing_balance": str(balance),
+        "risk_budget_dollars": (
+            str(config.risk_budget_dollars)
+            if config.risk_budget_dollars is not None
+            else None
+        ),
         "minimum_viable_equity": str(required),
         "can_fund_one_spread": fundable,
     }
@@ -98,7 +103,7 @@ def doctor(config: Config, alpaca: AlpacaClient) -> int:
     if not fundable:
         LOG.error(
             "balance %s cannot fund one %s-wide spread at %s risk; every tick "
-            "will skip. Raise RISK_FRACTION, narrow SPREAD_WIDTH, or fund at "
+            "will skip. Raise the risk budget, narrow SPREAD_WIDTH, or fund at "
             "least %s",
             balance,
             config.spread_width,

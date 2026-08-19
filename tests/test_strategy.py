@@ -11,6 +11,7 @@ from floor_insurance.strategy import (
     max_loss_per_contract,
     select_spread,
     size_contracts,
+    size_contracts_for_budget,
 )
 
 
@@ -49,6 +50,16 @@ def test_five_thousand_account_needs_at_least_fifty_cent_credit():
         )
 
 
+def test_absolute_hundred_dollar_budget_funds_one_xsp_spread():
+    assert size_contracts_for_budget(
+        Decimal("100"), Decimal("1"), Decimal("0.05"), 1
+    ) == 1
+    with pytest.raises(StrategySkip, match="risk budget"):
+        size_contracts_for_budget(
+            Decimal("94.99"), Decimal("1"), Decimal("0.05"), 1
+        )
+
+
 def test_rejects_missing_exact_long_strike():
     with pytest.raises(StrategySkip, match="no exact"):
         select_spread(
@@ -57,4 +68,3 @@ def test_rejects_missing_exact_long_strike():
             Decimal("15"),
             Decimal("1"),
         )
-

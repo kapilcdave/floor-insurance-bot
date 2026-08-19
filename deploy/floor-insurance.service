@@ -1,5 +1,5 @@
 [Unit]
-Description=Floor Insurance 0DTE SPY paper-trading bot
+Description=Floor Insurance 0DTE credit-spread paper-trading bot
 After=network-online.target
 Wants=network-online.target
 
@@ -26,4 +26,3 @@ ReadWritePaths=/var/lib/floor-insurance-bot
 
 [Install]
 WantedBy=multi-user.target
-
