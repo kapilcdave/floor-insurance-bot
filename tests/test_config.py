@@ -25,3 +25,12 @@ def test_underlying_is_pinned_to_spy(config):
     with pytest.raises(ConfigError, match="must be SPY"):
         replace(config, symbol="NBIS").validate()
 
+
+def test_dry_run_and_shadow_mode_are_mutually_exclusive(config):
+    with pytest.raises(ConfigError, match="cannot both be true"):
+        replace(config, dry_run=True, shadow_mode=True).validate()
+
+
+def test_shadow_mode_needs_positive_modeled_equity(config):
+    with pytest.raises(ConfigError, match="shadow equity"):
+        replace(config, dry_run=False, shadow_mode=True, shadow_equity=0).validate()

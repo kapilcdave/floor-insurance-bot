@@ -70,6 +70,10 @@ class Config:
     telegram_token: str | None
     telegram_chat_id: str | None
     dry_run: bool
+    shadow_mode: bool
+    shadow_equity: Decimal
+    shadow_fees_per_spread: Decimal
+    shadow_log_path: Path
 
     @classmethod
     def from_env(cls, *, require_credentials: bool = True) -> "Config":
@@ -118,6 +122,12 @@ class Config:
             telegram_token=os.getenv("TELEGRAM_BOT_TOKEN") or None,
             telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID") or None,
             dry_run=_bool("DRY_RUN", True),
+            shadow_mode=_bool("SHADOW_MODE", False),
+            shadow_equity=_decimal("SHADOW_EQUITY", "10000"),
+            shadow_fees_per_spread=_decimal("SHADOW_FEES_PER_SPREAD", "0"),
+            shadow_log_path=Path(
+                os.getenv("SHADOW_LOG_PATH", "state/shadow_events.jsonl")
+            ),
         )
         cfg.validate(require_credentials=require_credentials)
         return cfg
@@ -125,6 +135,14 @@ class Config:
     def validate(self, *, require_credentials: bool = True) -> None:
         if require_credentials and (not self.api_key or not self.api_secret):
             raise ConfigError("ALPACA_API_KEY and ALPACA_API_SECRET are required")
+        if self.dry_run and self.shadow_mode:
+            raise ConfigError("DRY_RUN and SHADOW_MODE cannot both be true")
+        if self.shadow_equity <= 0 or self.shadow_fees_per_spread < 0:
+            raise ConfigError(
+                "shadow equity must be positive and shadow fees cannot be negative"
+            )
+        if self.shadow_log_path == self.state_path:
+            raise ConfigError("SHADOW_LOG_PATH and STATE_PATH must be different files")
         if self.symbol != "SPY":
             raise ConfigError("UNDERLYING must be SPY for this bot")
         if not self.paper and not self.live_confirmed:

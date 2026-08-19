@@ -217,3 +217,72 @@ def test_early_close_moves_hard_close_to_noon(config):
     )
     bot.tick(now)
     assert bot.store.load("2026-08-18").exit_reason == "hard_close"
+
+
+def test_shadow_mode_tracks_virtual_trade_without_submitting_order(config):
+    entered = datetime(2026, 8, 18, 9, 45, tzinfo=ET)
+    config = replace(
+        config,
+        dry_run=False,
+        shadow_mode=True,
+        shadow_equity=Decimal("5000"),
+        shadow_log_path=config.state_path.with_name("shadow.jsonl"),
+    )
+    fake = FakeAlpaca(entered)
+    bot = engine(config, fake)
+    bot.tick(entered)
+    state = bot.store.load("2026-08-18")
+    assert state.phase == Phase.OPEN
+    assert state.shadow is True
+    assert state.active_order_id is None
+    assert state.active_client_order_id is None
+    assert fake.submissions == []
+
+    managed_at = entered.replace(hour=10, minute=0)
+    fake.now = managed_at
+    fake.short_quote = Quote(Decimal("0.15"), Decimal("0.30"), managed_at)
+    fake.long_quote = Quote(Decimal("0.08"), Decimal("0.10"), managed_at)
+    bot.tick(managed_at)
+
+    state = bot.store.load("2026-08-18")
+    assert state.phase == Phase.DONE
+    assert state.event_history[-2]["event"] == "shadow exit filled"
+    assert state.event_history[-2]["net_pnl"] == "28.00"
+    assert fake.submissions == []
+    summary = bot.shadow_journal.summary()
+    assert summary["trades"] == 1
+    assert summary["entries"] == 1
+    assert summary["observations"] == 1
+    assert summary["entries_without_exit"] == 0
+    assert summary["wins"] == 1
+    assert summary["total_net_pnl"] == "28.00"
+
+
+def test_shadow_stop_has_priority_and_applies_modeled_fees(config):
+    entered = datetime(2026, 8, 18, 9, 45, tzinfo=ET)
+    config = replace(
+        config,
+        dry_run=False,
+        shadow_mode=True,
+        shadow_equity=Decimal("5000"),
+        shadow_fees_per_spread=Decimal("0.06"),
+        shadow_log_path=config.state_path.with_name("shadow-stop.jsonl"),
+    )
+    fake = FakeAlpaca(entered)
+    bot = engine(config, fake)
+    bot.tick(entered)
+
+    stopped_at = entered.replace(hour=10, minute=0)
+    fake.now = stopped_at
+    fake.price = Decimal("537.90")
+    fake.short_quote = Quote(Decimal("0.70"), Decimal("0.80"), stopped_at)
+    fake.long_quote = Quote(Decimal("0.08"), Decimal("0.10"), stopped_at)
+    bot.tick(stopped_at)
+
+    state = bot.store.load("2026-08-18")
+    assert state.phase == Phase.DONE
+    assert state.losses == 1
+    summary = bot.shadow_journal.summary()
+    assert summary["exit_reasons"] == {"emergency_stop": 1}
+    assert summary["total_net_pnl"] == "-22.06"
+    assert fake.submissions == []

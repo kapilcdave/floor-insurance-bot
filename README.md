@@ -2,7 +2,8 @@
 
 A small, auditable 0DTE SPY bull-put-spread bot for Alpaca. It is designed for
 a 1 GB RAM / 30 GB Linux VPS and includes Telegram notifications, persistent
-daily state, paper-trading defaults, circuit breakers, and a systemd service.
+daily state, paper-trading defaults, zero-order shadow execution, circuit
+breakers, and a systemd service.
 
 > [!WARNING]
 > This is experimental software, not investment advice. 0DTE options can lose
@@ -88,8 +89,36 @@ Useful commands:
 
 ```bash
 .venv/bin/floor-insurance state
+.venv/bin/floor-insurance shadow-report
 .venv/bin/pytest --cov=floor_insurance
 ```
+
+## Zero-capital shadow mode
+
+Shadow mode runs the complete strategy against each observed SPY and options
+quote without submitting an order. It records conservative virtual entries,
+every 15-second quote observation, triggers, exits, and modeled P&L in an
+append-only JSONL journal.
+
+```text
+ALPACA_PAPER=true
+DRY_RUN=false
+SHADOW_MODE=true
+SHADOW_EQUITY=10000
+SHADOW_LOG_PATH=state/shadow_events.jsonl
+```
+
+Use `OPTIONS_FEED=opra` and `STOCK_FEED=sip` only when the Alpaca credentials
+have those data entitlements. The free `indicative`/`iex` combination still
+tests software mechanics but is not actual consolidated options pricing.
+
+No fractional option is created: `SHADOW_EQUITY` is only a hypothetical sizing
+balance. Set it to `5000` to reproduce the intended account, which will skip
+one contract unless its true maximum loss fits inside $50. The default $10,000
+balance makes it easier to collect one-contract forward-test observations.
+
+See [the shadow-mode guide](docs/SHADOW_MODE.md) for setup, event format,
+reporting, and the execution limitations this cannot measure.
 
 ## Telegram
 
@@ -203,6 +232,7 @@ eliminated in software.
 ```text
 src/floor_insurance/  REST client, strategy, state machine, CLI, backtester
 tests/                deterministic unit and lifecycle tests
+docs/                 shadow execution and research guides
 deploy/               hardened systemd unit for an existing VPS
 .github/workflows/    Python 3.11-3.13 CI
 ```

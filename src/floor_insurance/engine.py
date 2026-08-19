@@ -9,12 +9,14 @@ from .alpaca import AlpacaClient, AlpacaError
 from .config import Config
 from .models import DailyState, Phase
 from .notify import Notifier
+from .shadow import ShadowJournal
 from .state import StateStore
 from .strategy import (
     CENT,
     StrategySkip,
     executable_close_debit,
     executable_credit,
+    max_loss_per_contract,
     select_spread,
     size_contracts,
 )
@@ -41,11 +43,13 @@ class TradingEngine:
         alpaca: AlpacaClient,
         store: StateStore,
         notifier: Notifier,
+        shadow_journal: ShadowJournal | None = None,
     ):
         self.config = config
         self.alpaca = alpaca
         self.store = store
         self.notifier = notifier
+        self.shadow_journal = shadow_journal or ShadowJournal(config.shadow_log_path)
         self.tz = ZoneInfo(config.timezone)
         self._calendar_cache: dict[str, dict | None] = {}
 
@@ -109,11 +113,11 @@ class TradingEngine:
 
     def _enter(self, state: DailyState, now: datetime) -> None:
         account = self.alpaca.account()
-        if account.get("trading_blocked"):
+        if account.get("trading_blocked") and not self.config.shadow_mode:
             self._finish(state, now, "Alpaca account is trading-blocked")
             return
         level = int(account.get("options_trading_level") or 0)
-        if level < 3:
+        if level < 3 and not self.config.shadow_mode:
             self._finish(state, now, f"options level {level}; level 3 is required for spreads")
             return
 
@@ -131,8 +135,13 @@ class TradingEngine:
             raise StrategySkip(
                 f"executable credit ${credit:.2f} is below MIN_CREDIT ${self.config.min_credit:.2f}"
             )
+        sizing_equity = (
+            self.config.shadow_equity
+            if self.config.shadow_mode
+            else Decimal(str(account["equity"]))
+        )
         quantity = size_contracts(
-            Decimal(str(account["equity"])),
+            sizing_equity,
             self.config.risk_fraction,
             self.config.spread_width,
             credit,
@@ -146,9 +155,6 @@ class TradingEngine:
         state.quantity = quantity
         state.entry_credit = str(credit)
         state.entry_submissions += 1
-        client_id = f"floor-insurance-{state.trading_date}-entry-{state.entry_submissions}"
-        state.active_client_order_id = client_id
-        state.phase = Phase.ENTRY_PENDING
         state.event(
             "entry prepared",
             now,
@@ -158,7 +164,49 @@ class TradingEngine:
             credit=str(credit),
             quantity=quantity,
         )
-        self.store.save(state)
+
+        if self.config.shadow_mode:
+            state.phase = Phase.OPEN
+            state.shadow = True
+            state.entry_filled_at = now.isoformat()
+            state.entry_underlying = str(price)
+            state.active_client_order_id = None
+            per_contract_risk = max_loss_per_contract(
+                self.config.spread_width, credit
+            )
+            state.event(
+                "shadow entry filled",
+                now,
+                credit=str(credit),
+                quantity=quantity,
+                max_loss_per_contract=str(per_contract_risk),
+            )
+            self.store.save(state)
+            self.shadow_journal.write(
+                "shadow_entry",
+                now,
+                trading_date=state.trading_date,
+                feed=self.config.options_feed,
+                modeled_equity=sizing_equity,
+                risk_fraction=self.config.risk_fraction,
+                underlying=price,
+                short_symbol=short.symbol,
+                short_strike=short.strike,
+                short_bid=quotes[short.symbol].bid,
+                short_ask=quotes[short.symbol].ask,
+                long_symbol=long.symbol,
+                long_strike=long.strike,
+                long_bid=quotes[long.symbol].bid,
+                long_ask=quotes[long.symbol].ask,
+                entry_credit=credit,
+                quantity=quantity,
+                max_loss_per_contract=per_contract_risk,
+            )
+            self.notifier.send(
+                f"SHADOW entry: {quantity}x SPY {short.strike}/{long.strike} "
+                f"at ${credit} modeled credit; no order sent."
+            )
+            return
 
         if self.config.dry_run:
             self._finish(state, now, "dry run: valid entry found; no order submitted")
@@ -168,6 +216,10 @@ class TradingEngine:
             )
             return
 
+        client_id = f"floor-insurance-{state.trading_date}-entry-{state.entry_submissions}"
+        state.active_client_order_id = client_id
+        state.phase = Phase.ENTRY_PENDING
+        self.store.save(state)
         try:
             order = self._submit_or_reconcile(
                 state,
@@ -279,6 +331,9 @@ class TradingEngine:
         raise RuntimeError("pending phase has no order identity")
 
     def _manage_open(self, state: DailyState, now: datetime, hard_close: time) -> None:
+        if state.shadow:
+            self._manage_shadow_open(state, now, hard_close)
+            return
         if now.time() >= hard_close:
             self._submit_exit(state, now, "hard_close", price=None)
             return
@@ -303,6 +358,113 @@ class TradingEngine:
         )
         if close_debit <= target:
             self._submit_exit(state, now, "take_profit", price=target)
+
+    def _manage_shadow_open(
+        self, state: DailyState, now: datetime, hard_close: time
+    ) -> None:
+        price, trade_at = self.alpaca.latest_underlying_trade()
+        self._require_fresh(trade_at, now, "SPY trade")
+        quotes = self.alpaca.option_quotes(
+            [state.short_symbol or "", state.long_symbol or ""]
+        )
+        short_quote = quotes[state.short_symbol or ""]
+        long_quote = quotes[state.long_symbol or ""]
+        self._require_fresh(short_quote.timestamp, now, "short option quote")
+        self._require_fresh(long_quote.timestamp, now, "long option quote")
+        close_debit = executable_close_debit(short_quote, long_quote)
+        target = (
+            Decimal(state.entry_credit or "0") * self.config.take_profit_fraction
+        ).quantize(CENT, rounding=ROUND_CEILING)
+        stop_level = Decimal(state.short_strike or "0") + self.config.stop_buffer
+
+        self.shadow_journal.write(
+            "shadow_observation",
+            now,
+            trading_date=state.trading_date,
+            underlying=price,
+            stop_level=stop_level,
+            short_symbol=state.short_symbol,
+            short_bid=short_quote.bid,
+            short_ask=short_quote.ask,
+            long_symbol=state.long_symbol,
+            long_bid=long_quote.bid,
+            long_ask=long_quote.ask,
+            executable_close_debit=close_debit,
+            take_profit_target=target,
+        )
+
+        if now.time() >= hard_close:
+            self._complete_shadow_exit(state, now, "hard_close", close_debit, price)
+        elif price <= stop_level:
+            self._complete_shadow_exit(
+                state, now, "emergency_stop", close_debit, price
+            )
+        elif (
+            now.time() < _time(self.config.take_profit_cutoff_time)
+            and close_debit <= target
+        ):
+            self._complete_shadow_exit(state, now, "take_profit", close_debit, price)
+
+    def _complete_shadow_exit(
+        self,
+        state: DailyState,
+        now: datetime,
+        reason: str,
+        exit_debit: Decimal,
+        underlying: Decimal,
+    ) -> None:
+        entry_credit = Decimal(state.entry_credit or "0")
+        fees = self.config.shadow_fees_per_spread * state.quantity
+        gross_pnl = (entry_credit - exit_debit) * Decimal("100") * state.quantity
+        net_pnl = (gross_pnl - fees).quantize(CENT)
+        self.shadow_journal.write(
+            "shadow_exit",
+            now,
+            trading_date=state.trading_date,
+            entered_at=state.entry_filled_at,
+            entry_underlying=state.entry_underlying,
+            exit_underlying=underlying,
+            short_symbol=state.short_symbol,
+            short_strike=state.short_strike,
+            long_symbol=state.long_symbol,
+            long_strike=state.long_strike,
+            quantity=state.quantity,
+            entry_credit=entry_credit,
+            exit_debit=exit_debit,
+            gross_pnl=gross_pnl.quantize(CENT),
+            modeled_fees=fees.quantize(CENT),
+            net_pnl=net_pnl,
+            reason=reason,
+            feed=self.config.options_feed,
+        )
+        state.event(
+            "shadow exit filled",
+            now,
+            reason=reason,
+            debit=str(exit_debit),
+            net_pnl=str(net_pnl),
+        )
+        self.notifier.send(
+            f"SHADOW exit ({reason}): ${exit_debit} debit, modeled net P&L "
+            f"${net_pnl}; no order sent."
+        )
+        if reason == "emergency_stop":
+            state.losses += 1
+            self._clear_trade(state)
+            if state.losses >= self.config.max_daily_losses:
+                self._finish(state, now, "shadow daily loss circuit breaker reached")
+            elif (
+                state.entry_submissions < self.config.max_daily_entries
+                and now.time() < _time(self.config.entry_cutoff_time)
+            ):
+                state.phase = Phase.IDLE
+            else:
+                self._finish(
+                    state, now, "shadow stop; daily entry limit or cutoff reached"
+                )
+        else:
+            self._clear_trade(state)
+            self._finish(state, now, f"shadow {reason} exit")
 
     def _submit_exit(
         self, state: DailyState, now: datetime, reason: str, price: Decimal | None
@@ -376,6 +538,9 @@ class TradingEngine:
         state.active_order_id = None
         state.active_client_order_id = None
         state.exit_reason = None
+        state.shadow = False
+        state.entry_filled_at = None
+        state.entry_underlying = None
 
     def _finish(self, state: DailyState, now: datetime, reason: str) -> None:
         state.phase = Phase.DONE

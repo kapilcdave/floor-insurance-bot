@@ -9,5 +9,5 @@ build/
 dist/
 *.egg-info/
 state/*.json
+state/*.jsonl
 !state/.gitkeep
-
