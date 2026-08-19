@@ -10,4 +10,6 @@ dist/
 *.egg-info/
 state/*.json
 state/*.jsonl
+state/*.csv
+state/backtest-cache/
 !state/.gitkeep

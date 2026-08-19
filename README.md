@@ -93,6 +93,25 @@ Useful commands:
 .venv/bin/pytest --cov=floor_insurance
 ```
 
+## Directional debit-spread research
+
+The repository also contains a research-only 0DTE call/put debit-spread
+backtester. It tests a no-lookahead opening-range/VWAP signal and accepts only
+modeled spreads with at least 2:1 maximum reward/risk. It is intentionally not
+wired into the trading bot.
+
+```bash
+floor-directional-backtest \
+  --start 2025-08-18 \
+  --end 2026-08-18 \
+  --oos-start 2026-07-20
+```
+
+The initial baseline lost $728 on validation after modeled slippage and was
+rejected. Its final 22-session OOS period remains sealed. See
+[the directional research guide](docs/DIRECTIONAL_RESEARCH.md) for the exact
+assumptions, results, and historical-fill limitation.
+
 ## Zero-capital shadow mode
 
 Shadow mode runs the complete strategy against each observed SPY and options
