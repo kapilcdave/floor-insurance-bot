@@ -19,11 +19,14 @@ from .directional import (
     DirectionalSettings,
     PriceBar,
     SignalModel,
+    VixRegime,
     candidate_pairs,
     opening_range_signal,
+    regime_allows,
     select_debit_spread,
     simulate_debit_spread,
 )
+from .volatility import VolatilityHistory
 
 ET = ZoneInfo("America/New_York")
 CENT = Decimal("0.01")
@@ -88,6 +91,14 @@ class HistoricalData:
         self.config = config
         self.api = AlpacaClient(config)
         self.cache_dir = cache_dir
+        self._volatility: VolatilityHistory | None = None
+
+    def volatility(self) -> VolatilityHistory:
+        """Load the Cboe volatility complex once, from cache when present."""
+
+        if self._volatility is None:
+            self._volatility = VolatilityHistory.load(self.cache_dir)
+        return self._volatility
 
     def stock_sessions(self, start: date, end: date) -> dict[str, list[PriceBar]]:
         cache = self.cache_dir / f"spy-{start}-{end}-{self.config.stock_feed}.json"
@@ -254,6 +265,9 @@ def run_research(
 
     equity = settings.starting_equity
     all_results: list[DirectionalResult] = []
+    volatility = (
+        data.volatility() if settings.vix_regime != VixRegime.ANY else None
+    )
     for index, trading_date in enumerate(dates, start=1):
         if trading_date not in allowed:
             continue
@@ -271,6 +285,19 @@ def run_research(
             )
         else:
             day = date.fromisoformat(trading_date)
+            snapshot = volatility.snapshot(day) if volatility is not None else None
+            permitted, blocked = regime_allows(snapshot, settings)
+            if not permitted:
+                all_results.append(
+                    DirectionalResult(
+                        trading_date,
+                        signal.direction.value,
+                        False,
+                        f"volatility regime filter: {blocked}",
+                        equity_after=equity,
+                    )
+                )
+                continue
             pairs = candidate_pairs(day, signal, settings)
             symbols = sorted({symbol for pair in pairs for symbol in pair[:2]})
             if progress:
@@ -335,6 +362,26 @@ def run_research(
         "fill_model": "synchronized option-bar prices with modeled round-trip slippage",
         "historical_quotes_available": False,
         "signal_model": settings.signal_model.value,
+        "sizing": (
+            f"fixed {settings.fixed_contracts} contract(s), path independent, "
+            "risk budget ignored"
+            if settings.fixed_contracts is not None
+            else "constant reference equity, path independent"
+            if settings.constant_sizing
+            else "equity proportional, path dependent"
+        ),
+        "vix_regime": settings.vix_regime.value,
+        "volatility_source": (
+            "Cboe published daily index closes, prior session only"
+            if volatility is not None
+            else "not used"
+        ),
+        "volatility_coverage": (
+            volatility.coverage() if volatility is not None else None
+        ),
+        "volatility_calendar_sessions": (
+            len(volatility.calendar) if volatility is not None else None
+        ),
         "oos_revealed": reveal_oos,
         "oos_boundary": str(oos_start) if oos_start else "automatic final 20%",
         "oos_sessions": len(locked_dates),
@@ -360,12 +407,29 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--fees-per-spread", type=Decimal, default=Decimal("0.10"))
     parser.add_argument("--maximum-contracts", type=int, default=25)
     parser.add_argument(
+        "--fixed-contracts",
+        type=int,
+        help="size every trade identically, ignoring the risk budget; diagnostic only",
+    )
+    parser.add_argument(
+        "--constant-sizing",
+        action="store_true",
+        help="apply the risk rule to the starting balance so variants stay comparable",
+    )
+    parser.add_argument(
         "--signal-model",
         type=SignalModel,
         choices=list(SignalModel),
         default=SignalModel.OPENING_RANGE,
     )
     parser.add_argument("--hard-close", type=time.fromisoformat, default=time(15, 0))
+    parser.add_argument(
+        "--vix-regime",
+        type=VixRegime,
+        choices=list(VixRegime),
+        default=VixRegime.ANY,
+        help="prior-close Cboe volatility filter applied before any option data is read",
+    )
     parser.add_argument("--minimum-volume-ratio", type=Decimal, default=Decimal("1"))
     parser.add_argument(
         "--minimum-momentum-fraction", type=Decimal, default=Decimal("0.0015")
@@ -398,8 +462,11 @@ def main() -> int:
         slippage_per_side=args.slippage_per_side,
         fees_per_spread=args.fees_per_spread,
         maximum_contracts=args.maximum_contracts,
+        fixed_contracts=args.fixed_contracts,
+        constant_sizing=args.constant_sizing,
         signal_model=args.signal_model,
         hard_close=args.hard_close,
+        vix_regime=args.vix_regime,
         minimum_volume_ratio=args.minimum_volume_ratio,
         minimum_momentum_fraction=args.minimum_momentum_fraction,
         minimum_gap_fraction=args.minimum_gap_fraction,
@@ -408,6 +475,8 @@ def main() -> int:
         raise SystemExit("--risk-fraction must be greater than zero and at most 0.05")
     if min(settings.width, settings.minimum_reward_risk) <= 0:
         raise SystemExit("spread width and reward/risk must be positive")
+    if settings.fixed_contracts is not None and settings.fixed_contracts < 1:
+        raise SystemExit("--fixed-contracts must be at least one")
     if min(
         settings.minimum_volume_ratio,
         settings.minimum_momentum_fraction,

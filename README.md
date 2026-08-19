@@ -102,9 +102,10 @@ wired into the trading bot.
 
 ```bash
 floor-directional-backtest \
-  --start 2025-08-18 \
+  --start 2024-02-01 \
   --end 2026-08-18 \
-  --oos-start 2026-07-20
+  --oos-start 2026-07-20 \
+  --constant-sizing
 ```
 
 The initial baseline lost $728 on validation after modeled slippage and was
@@ -112,10 +113,14 @@ rejected. Its final 22-session OOS period remains sealed. See
 [the directional research guide](docs/DIRECTIONAL_RESEARCH.md) for the exact
 assumptions, results, and historical-fill limitation.
 
-Eight predeclared follow-up variants also failed the development acceptance
-rule. Reproduce the fixed comparison with `floor-directional-experiments` and
-see the [experiment ledger](docs/DIRECTIONAL_EXPERIMENTS.md). None of these
-models is available to the order-submission state machine.
+Fourteen predeclared variants have now failed the development acceptance rule,
+including six that split the breakout by the prior close of the Cboe volatility
+complex over a window extended back to February 2024. One of them appeared to
+pass until a sizing control showed the result came from compounding a different
+balance rather than from the filter. Reproduce the fixed comparison with
+`floor-directional-experiments` and see the
+[experiment ledger](docs/DIRECTIONAL_EXPERIMENTS.md). None of these models is
+available to the order-submission state machine.
 
 ## Zero-capital shadow mode
 

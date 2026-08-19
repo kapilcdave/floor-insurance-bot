@@ -37,15 +37,17 @@ source .env
 set +a
 
 floor-directional-backtest \
-  --start 2025-08-18 \
+  --start 2024-02-01 \
   --end 2026-08-18 \
   --oos-start 2026-07-20 \
+  --constant-sizing \
   --trades-output state/directional-trades.csv
 ```
 
 Raw bars are cached one session at a time under `state/backtest-cache/`. The
-cache is ignored by Git and was about 45 MB for the initial year, remaining
-well within the target VPS storage and memory limits.
+cache is ignored by Git and grew to about 151 MB for the two-and-a-half-year
+window, still within the target VPS storage and memory limits. Cboe daily index
+history is cached alongside it as `cboe-*.csv` and is a few megabytes.
 
 The explicit OOS period is not processed unless `--reveal-oos` is supplied.
 The report also lists any pre-existing option cache files inside the holdout;
@@ -72,5 +74,21 @@ both training and validation after the same slippage model, and rejected if it
 depends on repeatedly tuning the held-out period.
 
 Eight fixed price, volume, VWAP, timing, and overnight-gap hypotheses were
-subsequently evaluated. None passed the development acceptance rule. See the
+subsequently evaluated, then six more that split the baseline breakout by the
+prior close of the Cboe volatility complex, over a window extended back to
+February 2024. None passed the development acceptance rule. See the
 [experiment ledger](DIRECTIONAL_EXPERIMENTS.md); the OOS period remains sealed.
+
+## Position sizing and comparability
+
+By default a position is sized from the *running* balance, so two variants
+compound differently and cannot be compared with each other: a filter that skips
+losses keeps a larger balance and can afford days the unfiltered run had to skip.
+One variant looked profitable for exactly that reason before the control below
+was added.
+
+Use `--constant-sizing` whenever variants are compared. It applies the same risk
+fraction to the starting balance, so the day set and contract count are
+identical across variants while the 2% cap stays intact. `--fixed-contracts N`
+goes further and ignores the risk budget entirely; it takes premium the cap
+would forbid, so treat it as a diagnostic rather than a tradable configuration.

@@ -5,6 +5,8 @@ from datetime import date, datetime, time
 from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
 from enum import StrEnum
 
+from .volatility import VolatilitySnapshot
+
 CENT = Decimal("0.01")
 HUNDRED = Decimal("100")
 
@@ -21,6 +23,18 @@ class SignalModel(StrEnum):
     VWAP_REVERSION = "vwap_reversion"
     GAP_CONTINUATION = "gap_continuation"
     GAP_FADE = "gap_fade"
+
+
+class VixRegime(StrEnum):
+    """Prior-close Cboe volatility filters. Each pair partitions the sessions."""
+
+    ANY = "any"
+    LOW_PERCENTILE = "low_percentile"
+    HIGH_PERCENTILE = "high_percentile"
+    CONTANGO = "contango"
+    BACKWARDATION = "backwardation"
+    CHEAP_ONE_DAY = "cheap_one_day"
+    RICH_ONE_DAY = "rich_one_day"
 
 
 @dataclass(frozen=True)
@@ -66,6 +80,8 @@ class DirectionalSettings:
     slippage_per_side: Decimal = Decimal("0.05")
     fees_per_spread: Decimal = Decimal("0.10")
     maximum_contracts: int = 25
+    fixed_contracts: int | None = None
+    constant_sizing: bool = False
     market_open: time = time(9, 30)
     entry_time: time = time(9, 45)
     hard_close: time = time(15, 0)
@@ -75,6 +91,10 @@ class DirectionalSettings:
     minimum_volume_ratio: Decimal = Decimal("1")
     minimum_momentum_fraction: Decimal = Decimal("0.0015")
     minimum_gap_fraction: Decimal = Decimal("0.002")
+    vix_regime: VixRegime = VixRegime.ANY
+    vix_percentile_threshold: Decimal = Decimal("0.5")
+    term_slope_threshold: Decimal = Decimal("1")
+    one_day_ratio_threshold: Decimal = Decimal("1")
 
 
 @dataclass(frozen=True)
@@ -214,6 +234,52 @@ def opening_range_signal(
     )
 
 
+def regime_allows(
+    snapshot: VolatilitySnapshot | None, settings: DirectionalSettings
+) -> tuple[bool, str]:
+    """Apply the pre-declared prior-close volatility filter.
+
+    Each regime pair splits on one threshold, so the two halves of a family are
+    disjoint and exhaustive over the sessions that have the required data. A
+    session without the required series is never traded rather than silently
+    defaulting to the permissive branch.
+    """
+
+    regime = settings.vix_regime
+    if regime == VixRegime.ANY:
+        return True, ""
+    if snapshot is None:
+        return False, "no prior-session volatility close available"
+
+    if regime in {VixRegime.LOW_PERCENTILE, VixRegime.HIGH_PERCENTILE}:
+        value = snapshot.vix_percentile
+        threshold = settings.vix_percentile_threshold
+        label = "vix percentile"
+    elif regime in {VixRegime.CONTANGO, VixRegime.BACKWARDATION}:
+        value = snapshot.term_slope
+        threshold = settings.term_slope_threshold
+        label = "vix9d/vix3m"
+    else:
+        value = snapshot.one_day_ratio
+        threshold = settings.one_day_ratio_threshold
+        label = "vix1d/vix9d"
+
+    if value is None:
+        return False, f"{label} unavailable at {snapshot.as_of.isoformat()} close"
+    wants_below = regime in {
+        VixRegime.LOW_PERCENTILE,
+        VixRegime.CONTANGO,
+        VixRegime.CHEAP_ONE_DAY,
+    }
+    if wants_below:
+        if value < threshold:
+            return True, ""
+        return False, f"{label} {value} is not below {threshold}"
+    if value >= threshold:
+        return True, ""
+    return False, f"{label} {value} is below {threshold}"
+
+
 def occ_symbol(expiration: date, direction: Direction, strike: Decimal) -> str:
     strike_thousandths = int(strike * Decimal("1000"))
     kind = "C" if direction == Direction.CALL else "P"
@@ -288,7 +354,25 @@ def select_debit_spread(
 def size_debit_spreads(
     equity: Decimal, spread: DebitSpread, settings: DirectionalSettings
 ) -> int:
-    risk_budget = equity * settings.risk_fraction
+    """Size a position, optionally removing dependence on the running equity.
+
+    Equity-proportional sizing makes two variants incomparable: a filter that
+    avoids losses keeps a larger balance, so it can afford days the unfiltered
+    path had to skip. Two controls are available.
+
+    ``constant_sizing`` keeps the risk rule intact but applies it to the
+    starting balance, so every variant sees the same day set and the same
+    contract count. This is the faithful control.
+
+    ``fixed_contracts`` additionally ignores the risk budget. It answers a
+    different question and takes premium the 2% cap would forbid, so it is a
+    diagnostic rather than a tradable configuration.
+    """
+
+    if settings.fixed_contracts is not None:
+        return min(settings.fixed_contracts, settings.maximum_contracts)
+    reference = settings.starting_equity if settings.constant_sizing else equity
+    risk_budget = reference * settings.risk_fraction
     risk_per_spread = spread.entry_debit * HUNDRED + settings.fees_per_spread
     quantity = int((risk_budget / risk_per_spread).to_integral_value(rounding=ROUND_FLOOR))
     return min(quantity, settings.maximum_contracts)
