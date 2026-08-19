@@ -30,6 +30,36 @@ breakers, and a systemd service.
 - The default stop is the safer `short strike + $3.00`, as requested in the
   warning section. This is an underlying-price trigger, not a guaranteed exit
   price.
+- **The credit assumed above does not exist.** Measured over 615 sessions, a
+  put spread $15 below SPY paid a median credit of $0.00 and met the $0.05
+  minimum on 7 of them. The strategy as shipped is a no-op, and the structures
+  that do trade return a few percent a year at best. See
+  [the credit structure measurement](docs/CREDIT_STRUCTURE.md) before funding
+  anything.
+
+## Measured viability
+
+The credit strategy was finally measured rather than assumed. Across 36
+declared structures and 615 training and validation sessions, the market pays
+7% to 9% of the spread width, which requires roughly a nine-in-ten win rate to
+break even. Three structures survive realistic costs; the best returns about
+3.9% per year while risking 5.4% of the account on a single session.
+
+`floor-insurance doctor` now reports `minimum_viable_equity` and fails when the
+balance cannot fund one contract. With the shipped defaults that floor is
+$9,500, so the $5,000 example account would silently skip every tick.
+
+```bash
+floor-credit-structure \
+  --start 2024-02-01 \
+  --end 2026-08-18 \
+  --oos-start 2026-07-20 \
+  --slippage-per-side 0.02 \
+  --fees-per-spread 0.10
+```
+
+Read [docs/CREDIT_STRUCTURE.md](docs/CREDIT_STRUCTURE.md) for the full table and
+the reasoning. The conclusion is that this strategy is not viable as designed.
 
 ## Strategy defaults
 

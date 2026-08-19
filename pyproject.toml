@@ -20,6 +20,7 @@ floor-insurance = "floor_insurance.cli:main"
 floor-insurance-backtest = "floor_insurance.backtest:main"
 floor-directional-backtest = "floor_insurance.directional_backtest:main"
 floor-directional-experiments = "floor_insurance.directional_experiments:main"
+floor-credit-structure = "floor_insurance.credit_experiments:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

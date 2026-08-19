@@ -528,3 +528,65 @@ def test_regime_halves_reconcile_exactly_under_path_independent_sizing():
     assert scaled[0] == single[0]
     assert scaled[1] == single[1] * 5
 
+
+
+class RecordingApi:
+    """Stands in for AlpacaClient, returning one bar per requested symbol."""
+
+    def __init__(self, available: set[str]):
+        self.available = available
+        self.requests: list[list[str]] = []
+
+    def _request(self, method, base, path, *, params=None, payload=None):
+        symbols = (params or {}).get("symbols", "").split(",")
+        self.requests.append(symbols)
+        return {
+            "bars": {
+                symbol: [
+                    {
+                        "t": "2026-08-18T13:45:00Z",
+                        "o": "1.00",
+                        "h": "1.00",
+                        "l": "1.00",
+                        "c": "1.00",
+                        "v": "5",
+                        "vw": "1.00",
+                    }
+                ]
+                for symbol in symbols
+                if symbol in self.available
+            }
+        }
+
+
+def historical(config, tmp_path, available):
+    from floor_insurance.directional_backtest import HistoricalData
+
+    data = HistoricalData(config, tmp_path)
+    data.api = RecordingApi(available)
+    return data
+
+
+def test_option_cache_keeps_symbols_fetched_by_an_earlier_request(config, tmp_path):
+    day = date(2026, 8, 18)
+    data = historical(config, tmp_path, {"CALL_A", "PUT_B"})
+
+    first = data.option_bars(day, ["CALL_A"])
+    assert len(first["CALL_A"]) == 1
+
+    second = data.option_bars(day, ["PUT_B"])
+    assert len(second["PUT_B"]) == 1
+
+    # The earlier symbol must survive the second write.
+    replayed = data.option_bars(day, ["CALL_A"])
+    assert len(replayed["CALL_A"]) == 1
+    assert data.api.requests == [["CALL_A"], ["PUT_B"]]
+
+
+def test_symbols_that_never_traded_are_cached_and_not_refetched(config, tmp_path):
+    day = date(2026, 8, 18)
+    data = historical(config, tmp_path, set())
+
+    assert data.option_bars(day, ["QUIET"]) == {"QUIET": []}
+    assert data.option_bars(day, ["QUIET"]) == {"QUIET": []}
+    assert data.api.requests == [["QUIET"]]

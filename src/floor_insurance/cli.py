@@ -7,6 +7,7 @@ import signal
 import sys
 import time
 from datetime import datetime
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from .alpaca import AlpacaClient, AlpacaError
@@ -67,6 +68,13 @@ def _shadow_note(
 def doctor(config: Config, alpaca: AlpacaClient) -> int:
     account = alpaca.account()
     clock = alpaca.clock()
+    required = config.minimum_viable_equity()
+    balance = (
+        config.shadow_equity
+        if config.shadow_mode
+        else Decimal(str(account.get("equity") or "0"))
+    )
+    fundable = balance >= required
     report = {
         "paper": config.paper,
         "dry_run": config.dry_run,
@@ -82,15 +90,28 @@ def doctor(config: Config, alpaca: AlpacaClient) -> int:
         "stock_feed": config.stock_feed,
         "options_feed": config.options_feed,
         "telegram_configured": bool(config.telegram_token and config.telegram_chat_id),
+        "sizing_balance": str(balance),
+        "minimum_viable_equity": str(required),
+        "can_fund_one_spread": fundable,
     }
     print(json.dumps(report, indent=2))
+    if not fundable:
+        LOG.error(
+            "balance %s cannot fund one %s-wide spread at %s risk; every tick "
+            "will skip. Raise RISK_FRACTION, narrow SPREAD_WIDTH, or fund at "
+            "least %s",
+            balance,
+            config.spread_width,
+            config.risk_fraction,
+            required,
+        )
     if config.shadow_mode:
-        return 0
+        return 0 if fundable else 1
     eligible = (
         not account.get("trading_blocked")
         and int(account.get("options_trading_level") or 0) >= 3
     )
-    return 0 if eligible else 1
+    return 0 if eligible and fundable else 1
 
 
 def main() -> int:

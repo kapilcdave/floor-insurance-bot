@@ -139,9 +139,16 @@ class HistoricalData:
     def option_bars(
         self, trading_date: date, symbols: list[str]
     ) -> dict[str, list[PriceBar]]:
+        """Fetch option bars for a session, merging into the per-day cache.
+
+        Symbols that returned no bars are cached as empty lists. Without that,
+        a strike that simply never traded is missing from the cache forever and
+        every later run refetches the whole day.
+        """
+
         cache = self.cache_dir / f"options-{trading_date}.json"
-        cached = _cached_bars(cache)
-        if cached is not None and set(symbols).issubset(cached):
+        cached = _cached_bars(cache) or {}
+        if set(symbols).issubset(cached):
             return {symbol: cached[symbol] for symbol in symbols}
 
         start_at = datetime.combine(trading_date, time(9, 45), ET).astimezone(
@@ -169,8 +176,11 @@ class HistoricalData:
             if not token:
                 break
             params["page_token"] = token
-        _store_bars(cache, bars)
-        return bars
+        merged = dict(cached)
+        for symbol in symbols:
+            merged[symbol] = bars.get(symbol, [])
+        _store_bars(cache, merged)
+        return {symbol: merged[symbol] for symbol in symbols}
 
 
 def directional_metrics(results: list[DirectionalResult]) -> dict[str, object]:

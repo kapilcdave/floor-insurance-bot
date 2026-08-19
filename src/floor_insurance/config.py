@@ -137,7 +137,20 @@ class Config:
         cfg.validate(require_credentials=require_credentials)
         return cfg
 
+    def minimum_viable_equity(self) -> Decimal:
+        """Smallest balance that can fund one spread under the risk rule.
+
+        The risk rule sizes from the maximum loss, which is nearly the full
+        spread width. A $1-wide spread sold for the $0.05 minimum therefore
+        risks $95, so a 1% risk fraction cannot fund a single contract below
+        $9,500. Below this balance the bot is a silent no-op: every tick skips.
+        """
+
+        worst_case = (self.spread_width - self.min_credit) * Decimal("100")
+        return (worst_case / self.risk_fraction).quantize(Decimal("0.01"))
+
     def validate(self, *, require_credentials: bool = True) -> None:
+
         if require_credentials and (not self.api_key or not self.api_secret):
             raise ConfigError("ALPACA_API_KEY and ALPACA_API_SECRET are required")
         if self.dry_run and self.shadow_mode:
