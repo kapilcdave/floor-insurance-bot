@@ -6,6 +6,7 @@ from floor_insurance.directional import (
     Direction,
     DirectionalSettings,
     PriceBar,
+    SignalModel,
     candidate_pairs,
     occ_symbol,
     opening_range_signal,
@@ -13,6 +14,7 @@ from floor_insurance.directional import (
     simulate_debit_spread,
 )
 from floor_insurance.directional_backtest import research_splits
+from floor_insurance.directional_experiments import accepted, experiment_settings
 
 ET = ZoneInfo("America/New_York")
 
@@ -61,6 +63,67 @@ def test_opening_range_breakout_generates_direction_without_future_bars():
     assert signal is not None
     assert signal.direction == Direction.CALL
     assert signal.timestamp.time().isoformat() == "09:44:00"
+
+
+def test_volume_confirmation_rejects_a_fading_breakout():
+    settings = DirectionalSettings(
+        signal_model=SignalModel.OPENING_RANGE_VOLUME,
+        minimum_volume_ratio=Decimal("1"),
+    )
+    bars = stock_bars()
+    bars = [
+        PriceBar(
+            bar.timestamp,
+            bar.open,
+            bar.high,
+            bar.low,
+            bar.close,
+            Decimal("50") if index >= 10 else Decimal("100"),
+            bar.vwap,
+        )
+        for index, bar in enumerate(bars)
+    ]
+    assert opening_range_signal(bars, settings) is None
+
+
+def test_vwap_momentum_detects_persistent_move_without_breakout_requirement():
+    settings = DirectionalSettings(
+        signal_model=SignalModel.VWAP_MOMENTUM,
+        minimum_momentum_fraction=Decimal("0.001"),
+    )
+    signal = opening_range_signal(stock_bars(), settings)
+    assert signal is not None
+    assert signal.direction == Direction.CALL
+
+
+def test_vwap_reversion_fades_a_stretched_breakout():
+    settings = DirectionalSettings(
+        signal_model=SignalModel.VWAP_REVERSION,
+        minimum_momentum_fraction=Decimal("0.001"),
+    )
+    signal = opening_range_signal(stock_bars(), settings)
+    assert signal is not None
+    assert signal.direction == Direction.PUT
+
+
+def test_gap_continuation_requires_the_opening_move_to_hold():
+    settings = DirectionalSettings(
+        signal_model=SignalModel.GAP_CONTINUATION,
+        minimum_gap_fraction=Decimal("0.002"),
+    )
+    signal = opening_range_signal(stock_bars(), settings, Decimal("99"))
+    assert signal is not None
+    assert signal.direction == Direction.CALL
+
+
+def test_gap_fade_reverses_a_failed_gap():
+    settings = DirectionalSettings(
+        signal_model=SignalModel.GAP_FADE,
+        minimum_gap_fraction=Decimal("0.002"),
+    )
+    signal = opening_range_signal(stock_bars(bullish=False), settings, Decimal("99"))
+    assert signal is not None
+    assert signal.direction == Direction.PUT
 
 
 def test_occ_symbol_and_candidate_widths():
@@ -154,3 +217,25 @@ def test_explicit_oos_boundary_stays_chronological_and_locked():
     assert splits["train"] == set(dates[:7])
     assert splits["validation"] == set(dates[7:10])
     assert splits["out_of_sample"] == set(dates[10:])
+
+
+def test_experiment_ledger_is_fixed_and_rejects_small_validation_samples():
+    assert set(experiment_settings()) == {
+        "breakout_1500",
+        "volume_breakout_1200",
+        "vwap_momentum_1130",
+        "breakout_1030",
+        "breakout_1200",
+        "vwap_reversion_1130",
+        "gap_continuation_1200",
+        "gap_fade_1200",
+    }
+    report = {
+        "train": {"total_pnl": "100", "profit_factor": "1.2"},
+        "validation": {
+            "total_pnl": "50",
+            "profit_factor": "1.1",
+            "trades": 8,
+        },
+    }
+    assert accepted(report) is False

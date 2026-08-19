@@ -112,6 +112,11 @@ rejected. Its final 22-session OOS period remains sealed. See
 [the directional research guide](docs/DIRECTIONAL_RESEARCH.md) for the exact
 assumptions, results, and historical-fill limitation.
 
+Eight predeclared follow-up variants also failed the development acceptance
+rule. Reproduce the fixed comparison with `floor-directional-experiments` and
+see the [experiment ledger](docs/DIRECTIONAL_EXPERIMENTS.md). None of these
+models is available to the order-submission state machine.
+
 ## Zero-capital shadow mode
 
 Shadow mode runs the complete strategy against each observed SPY and options

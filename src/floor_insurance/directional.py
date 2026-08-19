@@ -14,6 +14,15 @@ class Direction(StrEnum):
     PUT = "put"
 
 
+class SignalModel(StrEnum):
+    OPENING_RANGE = "opening_range"
+    OPENING_RANGE_VOLUME = "opening_range_volume"
+    VWAP_MOMENTUM = "vwap_momentum"
+    VWAP_REVERSION = "vwap_reversion"
+    GAP_CONTINUATION = "gap_continuation"
+    GAP_FADE = "gap_fade"
+
+
 @dataclass(frozen=True)
 class PriceBar:
     timestamp: datetime
@@ -62,6 +71,10 @@ class DirectionalSettings:
     hard_close: time = time(15, 0)
     opening_range_minutes: int = 5
     candidate_radius: int = 2
+    signal_model: SignalModel = SignalModel.OPENING_RANGE
+    minimum_volume_ratio: Decimal = Decimal("1")
+    minimum_momentum_fraction: Decimal = Decimal("0.0015")
+    minimum_gap_fraction: Decimal = Decimal("0.002")
 
 
 @dataclass(frozen=True)
@@ -81,7 +94,9 @@ class DirectionalResult:
 
 
 def opening_range_signal(
-    bars: list[PriceBar], settings: DirectionalSettings
+    bars: list[PriceBar],
+    settings: DirectionalSettings,
+    previous_close: Decimal | None = None,
 ) -> DirectionalSignal | None:
     context = [
         bar
@@ -108,9 +123,84 @@ def opening_range_signal(
     last = context[-1]
     opening_high = max(bar.high for bar in opening_range)
     opening_low = min(bar.low for bar in opening_range)
-    if last.close > opening_high and last.close > session_vwap:
+    breakout_call = last.close > opening_high and last.close > session_vwap
+    breakout_put = last.close < opening_low and last.close < session_vwap
+
+    if settings.signal_model in {
+        SignalModel.GAP_CONTINUATION,
+        SignalModel.GAP_FADE,
+    }:
+        if previous_close is None or previous_close <= 0:
+            return None
+        opening_price = context[0].open
+        gap = (opening_price - previous_close) / previous_close
+        if abs(gap) < settings.minimum_gap_fraction:
+            return None
+        if settings.signal_model == SignalModel.GAP_CONTINUATION:
+            if gap > 0 and last.close > opening_price and last.close > session_vwap:
+                direction = Direction.CALL
+            elif gap < 0 and last.close < opening_price and last.close < session_vwap:
+                direction = Direction.PUT
+            else:
+                return None
+        elif gap > 0 and last.close < opening_price and last.close < session_vwap:
+            direction = Direction.PUT
+        elif gap < 0 and last.close > opening_price and last.close > session_vwap:
+            direction = Direction.CALL
+        else:
+            return None
+        return DirectionalSignal(
+            direction=direction,
+            timestamp=last.timestamp,
+            underlying=last.close,
+            opening_range_high=opening_high,
+            opening_range_low=opening_low,
+            session_vwap=session_vwap,
+        )
+
+    if settings.signal_model == SignalModel.OPENING_RANGE_VOLUME:
+        comparison = context[5:10]
+        confirmation = context[10:15]
+        comparison_volume = sum((bar.volume for bar in comparison), Decimal("0"))
+        confirmation_volume = sum((bar.volume for bar in confirmation), Decimal("0"))
+        if comparison_volume <= 0:
+            return None
+        volume_ratio = confirmation_volume / comparison_volume
+        if volume_ratio < settings.minimum_volume_ratio:
+            return None
+
+    if settings.signal_model in {
+        SignalModel.VWAP_MOMENTUM,
+        SignalModel.VWAP_REVERSION,
+    }:
+        reference = context[4].close
+        momentum = (last.close - reference) / reference
+        vwap_deviation = (last.close - session_vwap) / session_vwap
+        recent = context[-3:]
+        call_confirmed = all(bar.close > session_vwap for bar in recent)
+        put_confirmed = all(bar.close < session_vwap for bar in recent)
+        if settings.signal_model == SignalModel.VWAP_REVERSION:
+            if (
+                vwap_deviation >= settings.minimum_momentum_fraction
+                and breakout_call
+            ):
+                direction = Direction.PUT
+            elif (
+                vwap_deviation <= -settings.minimum_momentum_fraction
+                and breakout_put
+            ):
+                direction = Direction.CALL
+            else:
+                return None
+        elif momentum >= settings.minimum_momentum_fraction and call_confirmed:
+            direction = Direction.CALL
+        elif momentum <= -settings.minimum_momentum_fraction and put_confirmed:
+            direction = Direction.PUT
+        else:
+            return None
+    elif breakout_call:
         direction = Direction.CALL
-    elif last.close < opening_low and last.close < session_vwap:
+    elif breakout_put:
         direction = Direction.PUT
     else:
         return None

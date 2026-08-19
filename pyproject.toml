@@ -19,6 +19,7 @@ dev = ["pytest>=8,<9", "pytest-cov>=5,<7", "ruff>=0.12,<1"]
 floor-insurance = "floor_insurance.cli:main"
 floor-insurance-backtest = "floor_insurance.backtest:main"
 floor-directional-backtest = "floor_insurance.directional_backtest:main"
+floor-directional-experiments = "floor_insurance.directional_experiments:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

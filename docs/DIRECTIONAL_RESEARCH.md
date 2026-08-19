@@ -70,3 +70,7 @@ rescue this parameter set.
 Any next hypothesis should be written down before it is tested, compared on
 both training and validation after the same slippage model, and rejected if it
 depends on repeatedly tuning the held-out period.
+
+Eight fixed price, volume, VWAP, timing, and overnight-gap hypotheses were
+subsequently evaluated. None passed the development acceptance rule. See the
+[experiment ledger](DIRECTIONAL_EXPERIMENTS.md); the OOS period remains sealed.

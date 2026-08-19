@@ -18,6 +18,7 @@ from .directional import (
     DirectionalResult,
     DirectionalSettings,
     PriceBar,
+    SignalModel,
     candidate_pairs,
     opening_range_signal,
     select_debit_spread,
@@ -242,6 +243,7 @@ def run_research(
     settings: DirectionalSettings,
     reveal_oos: bool,
     oos_start: date | None = None,
+    progress: bool = True,
 ) -> tuple[dict[str, list[DirectionalResult]], dict[str, object]]:
     sessions = data.stock_sessions(start, end)
     dates = list(sessions)
@@ -256,7 +258,9 @@ def run_research(
         if trading_date not in allowed:
             continue
         bars = sessions[trading_date]
-        signal = opening_range_signal(bars, settings)
+        previous_bars = sessions[dates[index - 2]] if index > 1 else []
+        previous_close = previous_bars[-1].close if previous_bars else None
+        signal = opening_range_signal(bars, settings, previous_close)
         if signal is None:
             result = DirectionalResult(
                 trading_date,
@@ -269,10 +273,11 @@ def run_research(
             day = date.fromisoformat(trading_date)
             pairs = candidate_pairs(day, signal, settings)
             symbols = sorted({symbol for pair in pairs for symbol in pair[:2]})
-            print(
-                f"[{index}/{len(dates)}] {trading_date} {signal.direction.value}",
-                file=sys.stderr,
-            )
+            if progress:
+                print(
+                    f"[{index}/{len(dates)}] {trading_date} {signal.direction.value}",
+                    file=sys.stderr,
+                )
             option_bars = data.option_bars(day, symbols)
             entry_bars = {
                 symbol: next(
@@ -329,6 +334,7 @@ def run_research(
         ),
         "fill_model": "synchronized option-bar prices with modeled round-trip slippage",
         "historical_quotes_available": False,
+        "signal_model": settings.signal_model.value,
         "oos_revealed": reveal_oos,
         "oos_boundary": str(oos_start) if oos_start else "automatic final 20%",
         "oos_sessions": len(locked_dates),
@@ -353,6 +359,18 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--slippage-per-side", type=Decimal, default=Decimal("0.05"))
     parser.add_argument("--fees-per-spread", type=Decimal, default=Decimal("0.10"))
     parser.add_argument("--maximum-contracts", type=int, default=25)
+    parser.add_argument(
+        "--signal-model",
+        type=SignalModel,
+        choices=list(SignalModel),
+        default=SignalModel.OPENING_RANGE,
+    )
+    parser.add_argument("--hard-close", type=time.fromisoformat, default=time(15, 0))
+    parser.add_argument("--minimum-volume-ratio", type=Decimal, default=Decimal("1"))
+    parser.add_argument(
+        "--minimum-momentum-fraction", type=Decimal, default=Decimal("0.0015")
+    )
+    parser.add_argument("--minimum-gap-fraction", type=Decimal, default=Decimal("0.002"))
     parser.add_argument(
         "--oos-start",
         type=date.fromisoformat,
@@ -380,11 +398,22 @@ def main() -> int:
         slippage_per_side=args.slippage_per_side,
         fees_per_spread=args.fees_per_spread,
         maximum_contracts=args.maximum_contracts,
+        signal_model=args.signal_model,
+        hard_close=args.hard_close,
+        minimum_volume_ratio=args.minimum_volume_ratio,
+        minimum_momentum_fraction=args.minimum_momentum_fraction,
+        minimum_gap_fraction=args.minimum_gap_fraction,
     )
     if not (Decimal("0") < settings.risk_fraction <= Decimal("0.05")):
         raise SystemExit("--risk-fraction must be greater than zero and at most 0.05")
     if min(settings.width, settings.minimum_reward_risk) <= 0:
         raise SystemExit("spread width and reward/risk must be positive")
+    if min(
+        settings.minimum_volume_ratio,
+        settings.minimum_momentum_fraction,
+        settings.minimum_gap_fraction,
+    ) <= 0:
+        raise SystemExit("volume ratio, momentum fraction, and gap fraction must be positive")
     config = Config.from_env()
     reports, metadata = run_research(
         HistoricalData(config, args.cache_dir),
