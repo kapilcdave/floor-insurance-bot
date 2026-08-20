@@ -47,6 +47,16 @@ def _optional_decimal(name: str) -> Decimal | None:
         raise ConfigError(f"{name} must be a decimal number") from exc
 
 
+def _nullable_decimal(name: str, default: str) -> Decimal | None:
+    raw = os.getenv(name, default).strip().lower()
+    if raw in {"", "none", "off", "disabled"}:
+        return None
+    try:
+        return Decimal(raw)
+    except Exception as exc:
+        raise ConfigError(f"{name} must be a decimal number or none") from exc
+
+
 @dataclass(frozen=True)
 class Config:
     api_key: str
@@ -55,6 +65,7 @@ class Config:
     data_base_url: str
     paper: bool
     live_confirmed: bool
+    atm_live_confirmed: bool
     stock_feed: str
     options_feed: str
     symbol: str
@@ -69,7 +80,7 @@ class Config:
     max_total_loss_dollars: Decimal
     risk_fraction: Decimal
     risk_budget_dollars: Decimal | None
-    take_profit_fraction: Decimal
+    take_profit_fraction: Decimal | None
     min_credit: Decimal
     shadow_min_credit: Decimal
     max_contracts: int
@@ -97,6 +108,7 @@ class Config:
     def from_env(cls, *, require_credentials: bool = True) -> "Config":
         paper = _bool("ALPACA_PAPER", True)
         live_confirmed = _bool("LIVE_TRADING_CONFIRMED", False)
+        atm_live_confirmed = _bool("ATM_LIVE_CONFIRMED", False)
         options_feed = os.getenv("OPTIONS_FEED", "indicative").strip().lower()
         api_key = os.getenv("ALPACA_API_KEY", "").strip()
         api_secret = os.getenv("ALPACA_API_SECRET", "").strip()
@@ -105,6 +117,8 @@ class Config:
             if paper
             else "https://api.alpaca.markets"
         )
+        symbol = os.getenv("UNDERLYING", "SPY").strip().upper()
+        signal_default = "SPY" if symbol == "XSP" else symbol
         cfg = cls(
             api_key=api_key,
             api_secret=api_secret,
@@ -114,12 +128,13 @@ class Config:
             ).rstrip("/"),
             paper=paper,
             live_confirmed=live_confirmed,
+            atm_live_confirmed=atm_live_confirmed,
             stock_feed=os.getenv(
                 "STOCK_FEED", "iex" if paper else "sip"
             ).strip().lower(),
             options_feed=options_feed,
-            symbol=os.getenv("UNDERLYING", "SPY").strip().upper(),
-            signal_symbol=os.getenv("SIGNAL_SYMBOL", "SPY").strip().upper(),
+            symbol=symbol,
+            signal_symbol=os.getenv("SIGNAL_SYMBOL", signal_default).strip().upper(),
             trend_window=_int("TREND_WINDOW", 20),
             trend_mode=os.getenv("TREND_MODE", "above").strip().lower(),
             strike_selection=os.getenv("STRIKE_SELECTION", "atm").strip().lower(),
@@ -130,7 +145,7 @@ class Config:
             max_total_loss_dollars=_decimal("MAX_TOTAL_LOSS_DOLLARS", "100"),
             risk_fraction=_decimal("RISK_FRACTION", "0.01"),
             risk_budget_dollars=_optional_decimal("RISK_BUDGET_DOLLARS"),
-            take_profit_fraction=_decimal("TAKE_PROFIT_FRACTION", "0.50"),
+            take_profit_fraction=_nullable_decimal("TAKE_PROFIT_FRACTION", "0.50"),
             min_credit=_decimal("MIN_CREDIT", "0.05"),
             shadow_min_credit=_decimal("SHADOW_MIN_CREDIT", "0.01"),
             max_contracts=_int("MAX_CONTRACTS", 1),
@@ -189,8 +204,8 @@ class Config:
             )
         if self.shadow_log_path == self.state_path:
             raise ConfigError("SHADOW_LOG_PATH and STATE_PATH must be different files")
-        if self.symbol not in {"SPY", "XSP"}:
-            raise ConfigError("UNDERLYING must be SPY or XSP")
+        if self.symbol not in {"SPY", "QQQ", "IWM", "XSP"}:
+            raise ConfigError("UNDERLYING must be SPY, QQQ, IWM, or XSP")
         if not self.signal_symbol:
             raise ConfigError("SIGNAL_SYMBOL is required")
         if self.trend_window < 2:
@@ -212,6 +227,15 @@ class Config:
             raise ConfigError("live trading requires OPTIONS_FEED=opra")
         if not self.paper and self.stock_feed != "sip":
             raise ConfigError("live trading requires STOCK_FEED=sip")
+        if (
+            not self.paper
+            and self.strike_selection == "atm"
+            and not self.atm_live_confirmed
+        ):
+            raise ConfigError(
+                "live ATM strategy is research-blocked: set ATM_LIVE_CONFIRMED=true "
+                "only after independent forward validation"
+            )
         if self.stock_feed not in {"iex", "sip"}:
             raise ConfigError("STOCK_FEED must be iex or sip")
         if self.options_feed not in {"indicative", "opra"}:
@@ -232,7 +256,9 @@ class Config:
             raise ConfigError("RISK_FRACTION must be greater than 0 and at most 0.05")
         if self.risk_budget_dollars is not None and self.risk_budget_dollars <= 0:
             raise ConfigError("RISK_BUDGET_DOLLARS must be positive when configured")
-        if not (Decimal("0") < self.take_profit_fraction < Decimal("1")):
+        if self.take_profit_fraction is not None and not (
+            Decimal("0") < self.take_profit_fraction < Decimal("1")
+        ):
             raise ConfigError("TAKE_PROFIT_FRACTION must be between 0 and 1")
         if min(self.max_contracts, self.max_daily_entries, self.max_daily_losses) < 1:
             raise ConfigError("contract and loss caps must be positive")

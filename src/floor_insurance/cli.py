@@ -77,6 +77,7 @@ def doctor(config: Config, alpaca: AlpacaClient) -> int:
     fundable = balance >= required
     report = {
         "paper": config.paper,
+        "atm_live_confirmed": config.atm_live_confirmed,
         "dry_run": config.dry_run,
         "shadow_mode": config.shadow_mode,
         "shadow_equity": str(config.shadow_equity),
@@ -95,6 +96,11 @@ def doctor(config: Config, alpaca: AlpacaClient) -> int:
         "strike_selection": config.strike_selection,
         "stop_debit_multiple": str(config.stop_debit_multiple),
         "max_total_loss_dollars": str(config.max_total_loss_dollars),
+        "take_profit_fraction": (
+            str(config.take_profit_fraction)
+            if config.take_profit_fraction is not None
+            else None
+        ),
         "telegram_configured": bool(config.telegram_token and config.telegram_chat_id),
         "sizing_balance": str(balance),
         "risk_budget_dollars": (

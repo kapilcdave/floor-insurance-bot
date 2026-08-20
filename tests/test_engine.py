@@ -180,6 +180,33 @@ def test_live_entry_fill_then_take_profit_limit(config):
     assert fake.submissions[-1]["price"] == Decimal("0.25")
 
 
+def test_disabled_take_profit_holds_until_stop_or_hard_close(config):
+    now = datetime(2026, 8, 18, 10, 0, tzinfo=ET)
+    config = replace(config, dry_run=False, take_profit_fraction=None)
+    fake = FakeAlpaca(now)
+    fake.short_quote = Quote(Decimal("0.15"), Decimal("0.30"), now)
+    fake.long_quote = Quote(Decimal("0.08"), Decimal("0.10"), now)
+    bot = engine(config, fake)
+    bot.store.save(
+        DailyState(
+            "2026-08-18",
+            phase=Phase.OPEN,
+            short_symbol="short",
+            long_symbol="long",
+            short_strike="550",
+            long_strike="549",
+            quantity=1,
+            entry_credit="0.50",
+            entry_submissions=1,
+        )
+    )
+
+    bot.tick(now)
+
+    assert bot.store.load("2026-08-18").phase == Phase.OPEN
+    assert fake.submissions == []
+
+
 def test_filled_stop_counts_loss_and_finishes_at_entry_cap(config):
     now = datetime(2026, 8, 18, 10, 0, tzinfo=ET)
     config = replace(config, dry_run=False)

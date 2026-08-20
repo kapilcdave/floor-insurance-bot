@@ -441,6 +441,8 @@ class TradingEngine:
 
         if now.time() >= _time(self.config.take_profit_cutoff_time):
             return
+        if self.config.take_profit_fraction is None:
+            return
         target = (Decimal(state.entry_credit or "0") * self.config.take_profit_fraction).quantize(
             CENT, rounding=ROUND_CEILING
         )
@@ -461,8 +463,13 @@ class TradingEngine:
         self._require_fresh(long_quote.timestamp, now, "long option quote")
         close_debit = executable_close_debit(short_quote, long_quote)
         target = (
-            Decimal(state.entry_credit or "0") * self.config.take_profit_fraction
-        ).quantize(CENT, rounding=ROUND_CEILING)
+            (
+                Decimal(state.entry_credit or "0")
+                * self.config.take_profit_fraction
+            ).quantize(CENT, rounding=ROUND_CEILING)
+            if self.config.take_profit_fraction is not None
+            else None
+        )
         width = Decimal(state.short_strike or "0") - Decimal(state.long_strike or "0")
         stop_debit = stop_close_debit(
             width,
@@ -494,6 +501,7 @@ class TradingEngine:
             )
         elif (
             now.time() < _time(self.config.take_profit_cutoff_time)
+            and target is not None
             and close_debit <= target
         ):
             self._complete_shadow_exit(state, now, "take_profit", close_debit, price)

@@ -22,9 +22,11 @@ def test_live_trading_requires_consolidated_feeds(config):
         replace(config, paper=False, live_confirmed=True).validate()
 
 
-def test_underlying_allows_xsp_paper_and_rejects_other_symbols(config):
+def test_underlying_allows_research_etfs_and_xsp_paper(config):
+    replace(config, symbol="QQQ", signal_symbol="QQQ").validate()
+    replace(config, symbol="IWM", signal_symbol="IWM").validate()
     replace(config, symbol="XSP").validate()
-    with pytest.raises(ConfigError, match="must be SPY or XSP"):
+    with pytest.raises(ConfigError, match="must be SPY, QQQ, IWM, or XSP"):
         replace(config, symbol="NBIS").validate()
 
 
@@ -38,6 +40,26 @@ def test_xsp_live_trading_is_blocked(config):
             options_feed="opra",
             stock_feed="sip",
         ).validate()
+
+
+def test_live_atm_trading_has_a_separate_research_gate(config):
+    with pytest.raises(ConfigError, match="research-blocked"):
+        replace(
+            config,
+            paper=False,
+            live_confirmed=True,
+            atm_live_confirmed=False,
+            options_feed="opra",
+            stock_feed="sip",
+        ).validate()
+    replace(
+        config,
+        paper=False,
+        live_confirmed=True,
+        atm_live_confirmed=True,
+        options_feed="opra",
+        stock_feed="sip",
+    ).validate()
 
 
 def test_absolute_risk_budget_must_be_positive(config):
@@ -61,6 +83,7 @@ def test_atm_risk_controls_are_validated(config):
         replace(config, stop_debit_multiple=Decimal("1")).validate()
     with pytest.raises(ConfigError, match="MAX_TOTAL_LOSS_DOLLARS"):
         replace(config, max_total_loss_dollars=Decimal("0")).validate()
+    replace(config, take_profit_fraction=None).validate()
 
 
 def test_dry_run_and_shadow_mode_are_mutually_exclusive(config):
