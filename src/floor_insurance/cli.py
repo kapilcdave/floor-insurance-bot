@@ -92,6 +92,9 @@ def doctor(config: Config, alpaca: AlpacaClient) -> int:
         "signal_symbol": config.signal_symbol,
         "trend_window": config.trend_window,
         "trend_mode": config.trend_mode,
+        "strike_selection": config.strike_selection,
+        "stop_debit_multiple": str(config.stop_debit_multiple),
+        "max_total_loss_dollars": str(config.max_total_loss_dollars),
         "telegram_configured": bool(config.telegram_token and config.telegram_chat_id),
         "sizing_balance": str(balance),
         "risk_budget_dollars": (

@@ -61,9 +61,12 @@ class Config:
     signal_symbol: str
     trend_window: int
     trend_mode: str
+    strike_selection: str
     buffer_dollars: Decimal
     spread_width: Decimal
     stop_buffer: Decimal
+    stop_debit_multiple: Decimal
+    max_total_loss_dollars: Decimal
     risk_fraction: Decimal
     risk_budget_dollars: Decimal | None
     take_profit_fraction: Decimal
@@ -119,15 +122,18 @@ class Config:
             signal_symbol=os.getenv("SIGNAL_SYMBOL", "SPY").strip().upper(),
             trend_window=_int("TREND_WINDOW", 20),
             trend_mode=os.getenv("TREND_MODE", "above").strip().lower(),
+            strike_selection=os.getenv("STRIKE_SELECTION", "atm").strip().lower(),
             buffer_dollars=_decimal("BUFFER_DOLLARS", "15"),
             spread_width=_decimal("SPREAD_WIDTH", "1"),
             stop_buffer=_decimal("STOP_BUFFER", "3"),
+            stop_debit_multiple=_decimal("STOP_DEBIT_MULTIPLE", "2"),
+            max_total_loss_dollars=_decimal("MAX_TOTAL_LOSS_DOLLARS", "100"),
             risk_fraction=_decimal("RISK_FRACTION", "0.01"),
             risk_budget_dollars=_optional_decimal("RISK_BUDGET_DOLLARS"),
             take_profit_fraction=_decimal("TAKE_PROFIT_FRACTION", "0.50"),
             min_credit=_decimal("MIN_CREDIT", "0.05"),
             shadow_min_credit=_decimal("SHADOW_MIN_CREDIT", "0.01"),
-            max_contracts=_int("MAX_CONTRACTS", 10),
+            max_contracts=_int("MAX_CONTRACTS", 1),
             max_daily_entries=_int("MAX_DAILY_ENTRIES", 1),
             max_daily_losses=_int("MAX_DAILY_LOSSES", 3),
             poll_seconds_idle=_int("POLL_SECONDS_IDLE", 60),
@@ -191,6 +197,8 @@ class Config:
             raise ConfigError("TREND_WINDOW must be at least 2")
         if self.trend_mode not in {"above", "crossover"}:
             raise ConfigError("TREND_MODE must be above or crossover")
+        if self.strike_selection not in {"atm", "buffered"}:
+            raise ConfigError("STRIKE_SELECTION must be atm or buffered")
         if self.symbol == "XSP" and not self.paper:
             raise ConfigError(
                 "live XSP trading is blocked: Alpaca retail currently supports "
@@ -210,6 +218,10 @@ class Config:
             raise ConfigError("OPTIONS_FEED must be indicative or opra")
         if min(self.spread_width, self.buffer_dollars, self.stop_buffer) <= 0:
             raise ConfigError("spread width, strike buffer, and stop buffer must be positive")
+        if self.stop_debit_multiple <= 1:
+            raise ConfigError("STOP_DEBIT_MULTIPLE must be greater than one")
+        if self.max_total_loss_dollars <= 0:
+            raise ConfigError("MAX_TOTAL_LOSS_DOLLARS must be positive")
         if not (Decimal("0") < self.min_credit < self.spread_width):
             raise ConfigError("MIN_CREDIT must be positive and below SPREAD_WIDTH")
         if not (Decimal("0") < self.shadow_min_credit < self.spread_width):

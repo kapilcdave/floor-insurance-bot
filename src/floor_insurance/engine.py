@@ -17,9 +17,10 @@ from .strategy import (
     executable_close_debit,
     executable_credit,
     max_loss_per_contract,
+    select_atm_spread,
     select_spread,
-    size_contracts,
     size_contracts_for_budget,
+    stop_close_debit,
 )
 from .trend import TrendMode, trend_signal
 
@@ -169,9 +170,15 @@ class TradingEngine:
         price, trade_at = self.alpaca.latest_underlying_trade(now.date().isoformat())
         self._require_fresh(trade_at, now, f"{self.config.symbol} reference")
         contracts = self.alpaca.put_contracts(now.date().isoformat())
-        short, long = select_spread(
-            contracts, price, self.config.buffer_dollars, self.config.spread_width
-        )
+        if self.config.strike_selection == "atm":
+            short, long = select_atm_spread(
+                contracts, price, self.config.spread_width
+            )
+        else:
+            short, long = select_spread(
+                contracts, price, self.config.buffer_dollars, self.config.spread_width
+            )
+        spread_width = short.strike - long.strike
         quotes = self.alpaca.option_quotes([short.symbol, long.symbol])
         self._require_fresh(quotes[short.symbol].timestamp, now, "short option quote")
         self._require_fresh(quotes[long.symbol].timestamp, now, "long option quote")
@@ -189,25 +196,37 @@ class TradingEngine:
                 f"executable credit ${credit:.2f} is below "
                 f"{threshold_name} ${min_credit:.2f}"
             )
+        per_contract_risk = max_loss_per_contract(spread_width, credit)
+        if per_contract_risk > self.config.max_total_loss_dollars:
+            raise StrategySkip(
+                f"one spread risks ${per_contract_risk:.2f}, above "
+                f"MAX_TOTAL_LOSS_DOLLARS ${self.config.max_total_loss_dollars:.2f}"
+            )
         sizing_equity = (
             self.config.shadow_equity
             if self.config.shadow_mode
             else Decimal(str(account["equity"]))
         )
         if self.config.risk_budget_dollars is None:
-            quantity = size_contracts(
-                sizing_equity,
-                self.config.risk_fraction,
-                self.config.spread_width,
+            risk_budget = min(
+                sizing_equity * self.config.risk_fraction,
+                self.config.max_total_loss_dollars,
+            )
+            quantity = size_contracts_for_budget(
+                risk_budget,
+                spread_width,
                 credit,
                 self.config.max_contracts,
             )
-            risk_budget = sizing_equity * self.config.risk_fraction
         else:
-            risk_budget = min(self.config.risk_budget_dollars, sizing_equity)
+            risk_budget = min(
+                self.config.risk_budget_dollars,
+                sizing_equity,
+                self.config.max_total_loss_dollars,
+            )
             quantity = size_contracts_for_budget(
                 risk_budget,
-                self.config.spread_width,
+                spread_width,
                 credit,
                 self.config.max_contracts,
             )
@@ -225,6 +244,7 @@ class TradingEngine:
             underlying=str(price),
             short=str(short.strike),
             long=str(long.strike),
+            width=str(spread_width),
             credit=str(credit),
             quantity=quantity,
         )
@@ -235,9 +255,6 @@ class TradingEngine:
             state.entry_filled_at = now.isoformat()
             state.entry_underlying = str(price)
             state.active_client_order_id = None
-            per_contract_risk = max_loss_per_contract(
-                self.config.spread_width, credit
-            )
             state.event(
                 "shadow entry filled",
                 now,
@@ -406,21 +423,24 @@ class TradingEngine:
             self._submit_exit(state, now, "hard_close", price=None)
             return
 
-        price, trade_at = self.alpaca.latest_underlying_trade(now.date().isoformat())
-        self._require_fresh(trade_at, now, f"{self.config.symbol} reference")
-        short_strike = Decimal(state.short_strike or "0")
-        if price <= short_strike + self.config.stop_buffer:
-            self._submit_exit(state, now, "emergency_stop", price=None)
-            return
-
-        if now.time() >= _time(self.config.take_profit_cutoff_time):
-            return
         quotes = self.alpaca.option_quotes([state.short_symbol or "", state.long_symbol or ""])
         short_quote = quotes[state.short_symbol or ""]
         long_quote = quotes[state.long_symbol or ""]
         self._require_fresh(short_quote.timestamp, now, "short option quote")
         self._require_fresh(long_quote.timestamp, now, "long option quote")
         close_debit = executable_close_debit(short_quote, long_quote)
+        width = Decimal(state.short_strike or "0") - Decimal(state.long_strike or "0")
+        stop = stop_close_debit(
+            width,
+            Decimal(state.entry_credit or "0"),
+            self.config.stop_debit_multiple,
+        )
+        if close_debit >= stop:
+            self._submit_exit(state, now, "emergency_stop", price=None)
+            return
+
+        if now.time() >= _time(self.config.take_profit_cutoff_time):
+            return
         target = (Decimal(state.entry_credit or "0") * self.config.take_profit_fraction).quantize(
             CENT, rounding=ROUND_CEILING
         )
@@ -443,14 +463,19 @@ class TradingEngine:
         target = (
             Decimal(state.entry_credit or "0") * self.config.take_profit_fraction
         ).quantize(CENT, rounding=ROUND_CEILING)
-        stop_level = Decimal(state.short_strike or "0") + self.config.stop_buffer
+        width = Decimal(state.short_strike or "0") - Decimal(state.long_strike or "0")
+        stop_debit = stop_close_debit(
+            width,
+            Decimal(state.entry_credit or "0"),
+            self.config.stop_debit_multiple,
+        )
 
         self.shadow_journal.write(
             "shadow_observation",
             now,
             trading_date=state.trading_date,
             underlying=price,
-            stop_level=stop_level,
+            stop_debit=stop_debit,
             short_symbol=state.short_symbol,
             short_bid=short_quote.bid,
             short_ask=short_quote.ask,
@@ -463,7 +488,7 @@ class TradingEngine:
 
         if now.time() >= hard_close:
             self._complete_shadow_exit(state, now, "hard_close", close_debit, price)
-        elif price <= stop_level:
+        elif close_debit >= stop_debit:
             self._complete_shadow_exit(
                 state, now, "emergency_stop", close_debit, price
             )

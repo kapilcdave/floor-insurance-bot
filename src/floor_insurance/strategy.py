@@ -32,6 +32,27 @@ def select_spread(
     )
 
 
+def select_atm_spread(
+    contracts: list[Contract],
+    underlying_price: Decimal,
+    width: Decimal,
+) -> tuple[Contract, Contract]:
+    """Select the nearest put at or below spot and its exact-width hedge."""
+
+    by_strike = {contract.strike: contract for contract in contracts}
+    eligible = sorted(
+        (strike for strike in by_strike if strike <= underlying_price),
+        reverse=True,
+    )
+    for short_strike in eligible:
+        long_contract = by_strike.get(short_strike - width)
+        if long_contract:
+            return by_strike[short_strike], long_contract
+    raise StrategySkip(
+        f"no exact {width}-wide ATM put spread at or below spot {underlying_price}"
+    )
+
+
 def executable_credit(short_quote: Quote, long_quote: Quote) -> Decimal:
     value = short_quote.bid - long_quote.ask
     return max(Decimal("0"), value.quantize(CENT, rounding=ROUND_FLOOR))
@@ -46,6 +67,16 @@ def max_loss_per_contract(width: Decimal, credit: Decimal) -> Decimal:
     if credit <= 0 or credit >= width:
         raise StrategySkip("credit must be greater than zero and less than width")
     return ((width - credit) * MULTIPLIER).quantize(CENT)
+
+
+def stop_close_debit(
+    width: Decimal, credit: Decimal, debit_multiple: Decimal
+) -> Decimal:
+    if width <= 0 or credit <= 0 or credit >= width:
+        raise StrategySkip("spread width and credit do not define a valid credit spread")
+    if debit_multiple <= 1:
+        raise StrategySkip("stop debit multiple must be greater than one")
+    return min(width, credit * debit_multiple).quantize(CENT, rounding=ROUND_CEILING)
 
 
 def size_contracts(

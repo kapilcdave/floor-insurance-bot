@@ -42,8 +42,8 @@ class FakeAlpaca:
 
     def put_contracts(self, _date):
         return [
-            Contract("short", Decimal("535"), "2026-08-18"),
-            Contract("long", Decimal("534"), "2026-08-18"),
+            Contract("short", Decimal("550"), "2026-08-18"),
+            Contract("long", Decimal("549"), "2026-08-18"),
         ]
 
     def option_quotes(self, _symbols):
@@ -129,7 +129,8 @@ def test_emergency_stop_submits_atomic_market_exit(config):
     now = datetime(2026, 8, 18, 10, 0, tzinfo=ET)
     config = replace(config, dry_run=False)
     fake = FakeAlpaca(now)
-    fake.price = Decimal("537.90")
+    fake.short_quote = Quote(Decimal("1.00"), Decimal("1.05"), now)
+    fake.long_quote = Quote(Decimal("0.00"), Decimal("0.05"), now)
     bot = engine(config, fake)
     bot.store.save(
         DailyState(
@@ -183,7 +184,8 @@ def test_filled_stop_counts_loss_and_finishes_at_entry_cap(config):
     now = datetime(2026, 8, 18, 10, 0, tzinfo=ET)
     config = replace(config, dry_run=False)
     fake = FakeAlpaca(now)
-    fake.price = Decimal("537.90")
+    fake.short_quote = Quote(Decimal("1.00"), Decimal("1.05"), now)
+    fake.long_quote = Quote(Decimal("0.00"), Decimal("0.05"), now)
     bot = engine(config, fake)
     bot.store.save(
         DailyState(
@@ -379,9 +381,8 @@ def test_shadow_stop_has_priority_and_applies_modeled_fees(config):
 
     stopped_at = entered.replace(hour=10, minute=0)
     fake.now = stopped_at
-    fake.price = Decimal("537.90")
-    fake.short_quote = Quote(Decimal("0.70"), Decimal("0.80"), stopped_at)
-    fake.long_quote = Quote(Decimal("0.08"), Decimal("0.10"), stopped_at)
+    fake.short_quote = Quote(Decimal("0.95"), Decimal("1.08"), stopped_at)
+    fake.long_quote = Quote(Decimal("0.08"), Decimal("0.08"), stopped_at)
     bot.tick(stopped_at)
 
     state = bot.store.load("2026-08-18")
@@ -389,5 +390,5 @@ def test_shadow_stop_has_priority_and_applies_modeled_fees(config):
     assert state.losses == 1
     summary = bot.shadow_journal.summary()
     assert summary["exit_reasons"] == {"emergency_stop": 1}
-    assert summary["total_net_pnl"] == "-22.06"
+    assert summary["total_net_pnl"] == "-50.06"
     assert fake.submissions == []
