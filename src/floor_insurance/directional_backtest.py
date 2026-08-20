@@ -100,16 +100,21 @@ class HistoricalData:
             self._volatility = VolatilityHistory.load(self.cache_dir)
         return self._volatility
 
-    def stock_sessions(self, start: date, end: date) -> dict[str, list[PriceBar]]:
-        cache = self.cache_dir / f"spy-{start}-{end}-{self.config.stock_feed}.json"
+    def stock_sessions(
+        self, start: date, end: date, symbol: str = "SPY"
+    ) -> dict[str, list[PriceBar]]:
+        symbol = symbol.upper()
+        cache = self.cache_dir / (
+            f"{symbol.lower()}-{start}-{end}-{self.config.stock_feed}.json"
+        )
         cached = _cached_bars(cache)
         if cached is not None:
-            bars = cached.get("SPY", [])
+            bars = cached.get(symbol, [])
         else:
             start_at = datetime.combine(start, time(9, 30), ET).astimezone(ZoneInfo("UTC"))
             end_at = datetime.combine(end, time(16, 1), ET).astimezone(ZoneInfo("UTC"))
             params: dict[str, Any] = {
-                "symbols": "SPY",
+                "symbols": symbol,
                 "timeframe": "1Min",
                 "start": start_at.isoformat(),
                 "end": end_at.isoformat(),
@@ -123,13 +128,13 @@ class HistoricalData:
                     "GET", self.config.data_base_url, "/v2/stocks/bars", params=params
                 )
                 raw = data.get("bars", {})
-                page = raw.get("SPY", []) if isinstance(raw, dict) else raw
+                page = raw.get(symbol, []) if isinstance(raw, dict) else raw
                 bars.extend(_bar(item) for item in page)
                 token = data.get("next_page_token")
                 if not token:
                     break
                 params["page_token"] = token
-            _store_bars(cache, {"SPY": bars})
+            _store_bars(cache, {symbol: bars})
         sessions: dict[str, list[PriceBar]] = {}
         for bar in bars:
             if time(9, 30) <= bar.timestamp.time() <= time(16, 0):

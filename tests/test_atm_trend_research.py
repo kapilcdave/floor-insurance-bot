@@ -11,7 +11,7 @@ from floor_insurance.atm_trend_research import (
     simulate_atm_trend,
     viable,
 )
-from floor_insurance.credit_structure import occ_put
+from floor_insurance.credit_structure import occ_put_for
 from floor_insurance.directional import PriceBar
 from floor_insurance.trend import TrendMode
 
@@ -37,8 +37,8 @@ def option_bars(values: dict[int, str]) -> list[PriceBar]:
 
 def options(short: dict[int, str], long: dict[int, str]):
     return {
-        occ_put(DAY, Decimal("100")): option_bars(short),
-        occ_put(DAY, Decimal("99")): option_bars(long),
+        occ_put_for("SPY", DAY, Decimal("100")): option_bars(short),
+        occ_put_for("SPY", DAY, Decimal("99")): option_bars(long),
     }
 
 
@@ -74,6 +74,12 @@ def test_atm_strikes_and_symbols_use_the_put_at_or_below_spot():
     assert required_symbols(DAY, Decimal("100.80"), config()) == [
         "SPY260818P00100000",
         "SPY260818P00099000",
+    ]
+    assert required_symbols(
+        DAY, Decimal("100.80"), config(symbol="QQQ")
+    ) == [
+        "QQQ260818P00100000",
+        "QQQ260818P00099000",
     ]
 
 

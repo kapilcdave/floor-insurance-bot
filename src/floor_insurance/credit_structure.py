@@ -98,8 +98,12 @@ def minimum_equity(
     return (max_loss_per_contract(width, credit) / risk_fraction).quantize(CENT)
 
 
+def occ_put_for(symbol: str, expiration: date, strike: Decimal) -> str:
+    return f"{symbol}{expiration:%y%m%d}P{int(strike * Decimal('1000')):08d}"
+
+
 def occ_put(expiration: date, strike: Decimal) -> str:
-    return f"SPY{expiration:%y%m%d}P{int(strike * Decimal('1000')):08d}"
+    return occ_put_for("SPY", expiration, strike)
 
 
 def spread_strikes(spot: Decimal, settings: CreditSettings) -> tuple[Decimal, Decimal]:

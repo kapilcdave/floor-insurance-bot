@@ -12,7 +12,7 @@ from pathlib import Path
 from statistics import mean
 
 from .config import Config
-from .credit_structure import occ_put
+from .credit_structure import occ_put_for
 from .directional import PriceBar
 from .directional_backtest import HistoricalData, research_splits
 from .strategy import max_loss_per_contract, stop_close_debit
@@ -35,6 +35,7 @@ class AtmTrendSettings:
     hard_close: time = time(15, 0)
     slippage_per_side: Decimal = Decimal("0.02")
     fees_per_spread: Decimal = Decimal("0.10")
+    symbol: str = "SPY"
 
     @property
     def label(self) -> str:
@@ -98,7 +99,10 @@ def required_symbols(
     trading_date: date, spot: Decimal, settings: AtmTrendSettings
 ) -> list[str]:
     short, long = atm_strikes(spot, settings.width)
-    return [occ_put(trading_date, short), occ_put(trading_date, long)]
+    return [
+        occ_put_for(settings.symbol, trading_date, short),
+        occ_put_for(settings.symbol, trading_date, long),
+    ]
 
 
 def _at(bars: list[PriceBar], moment: time) -> PriceBar | None:
@@ -128,11 +132,17 @@ def simulate_atm_trend(
 
     entry = _at(spy_bars, settings.entry_time)
     if entry is None:
-        return AtmTrendResult(trading_date, True, False, "no SPY entry bar")
+        return AtmTrendResult(
+            trading_date, True, False, f"no {settings.symbol} entry bar"
+        )
     day = date.fromisoformat(trading_date)
     short_strike, long_strike = atm_strikes(entry.open, settings.width)
-    short_bars = option_bars.get(occ_put(day, short_strike), [])
-    long_bars = option_bars.get(occ_put(day, long_strike), [])
+    short_bars = option_bars.get(
+        occ_put_for(settings.symbol, day, short_strike), []
+    )
+    long_bars = option_bars.get(
+        occ_put_for(settings.symbol, day, long_strike), []
+    )
     short_entry = _at(short_bars, settings.entry_time)
     long_entry = _at(long_bars, settings.entry_time)
     if short_entry is None or long_entry is None:
@@ -273,6 +283,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--oos-start", type=date.fromisoformat, required=True)
     parser.add_argument("--slippage-per-side", type=Decimal, default=Decimal("0.02"))
     parser.add_argument("--fees-per-spread", type=Decimal, default=Decimal("0.10"))
+    parser.add_argument("--symbol", choices=("SPY", "QQQ", "IWM"), default="SPY")
     parser.add_argument("--cache-dir", type=Path, default=Path("state/atm-trend-cache"))
     return parser
 
@@ -281,7 +292,7 @@ def main() -> int:
     args = _parser().parse_args()
     config = Config.from_env()
     data = HistoricalData(config, args.cache_dir)
-    sessions = data.stock_sessions(args.start, args.end)
+    sessions = data.stock_sessions(args.start, args.end, args.symbol)
     dates = list(sessions)
     splits = research_splits(dates, args.oos_start)
     allowed = splits["train"] | splits["validation"]
@@ -290,6 +301,7 @@ def main() -> int:
             settings,
             slippage_per_side=args.slippage_per_side,
             fees_per_spread=args.fees_per_spread,
+            symbol=args.symbol,
         )
         for settings in settings_grid()
     ]
@@ -346,6 +358,7 @@ def main() -> int:
         json.dumps(
             {
                 "acceptance_rule": ACCEPTANCE_RULE,
+                "symbol": args.symbol,
                 "candidate": ranked[0] if ranked else None,
                 "viable": ranked,
                 "option_sessions_fetched": fetched,

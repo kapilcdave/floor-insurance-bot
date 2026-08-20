@@ -16,6 +16,7 @@ from floor_insurance.credit_structure import (
     max_loss_per_contract,
     minimum_equity,
     occ_put,
+    occ_put_for,
     simulate_credit_spread,
     spread_strikes,
 )
@@ -112,6 +113,7 @@ def test_strikes_sit_a_whole_buffer_below_spot():
 
 def test_occ_put_encodes_thousandths():
     assert occ_put(DAY, Decimal("95")) == "SPY260818P00095000"
+    assert occ_put_for("IWM", DAY, Decimal("225")) == "IWM260818P00225000"
 
 
 def test_entry_is_skipped_when_the_credit_is_below_the_floor():
