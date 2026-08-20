@@ -90,6 +90,14 @@ floor-credit-structure \
 Read [docs/CREDIT_STRUCTURE.md](docs/CREDIT_STRUCTURE.md) for the full table and
 the reasoning. The conclusion is that this strategy is not viable as designed.
 
+## Implied-move SPY experiment
+
+A separate research-only harness tests six predeclared SPY put-spread variants
+whose strikes are one or 1.25 ATM-straddle-implied moves below spot. It charges
+adverse fill on every leg, performs an additional cost stress, and keeps the
+final chronological holdout sealed. It is not connected to order submission.
+See [the implied-move pre-registration](docs/IMPLIED_MOVE_RESEARCH.md).
+
 ## Strategy defaults
 
 At 09:45 America/New_York on a regular trading day, the bot first fetches
