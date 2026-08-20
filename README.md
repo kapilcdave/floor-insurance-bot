@@ -1,8 +1,12 @@
 # Floor Insurance Bot
 
-A small, auditable 0DTE SPY bull-put-spread bot for Alpaca. It is designed for
-a 1 GB RAM / 30 GB Linux VPS and includes Telegram notifications, persistent
-daily state, paper-trading defaults, circuit breakers, and a systemd service.
+A small, auditable 0DTE credit-spread research bot for Alpaca. The active local
+setup observes an IWM ATM bull-put spread after a completed-close 20-day SMA
+crossover in zero-order shadow mode. SPY, QQQ, and paper-only XSP remain
+supported. It is
+designed for a 1 GB RAM / 30 GB Linux VPS and includes Telegram notifications,
+persistent daily state, paper-trading defaults, zero-order shadow execution,
+circuit breakers, and a systemd service.
 
 > [!WARNING]
 > This is experimental software, not investment advice. 0DTE options can lose
@@ -16,6 +20,9 @@ daily state, paper-trading defaults, circuit breakers, and a systemd service.
   `(spread width - entry credit) * 100 * contracts`. A $5,000 account with a 1%
   risk budget can trade one spread only when its filled credit is at least
   $0.50. This bot never rounds a zero-contract result up to one.
+- Options are not fractional. A one-contract, $1-wide XSP spread entered for a
+  $0.05 credit has a $95 maximum loss. On a $100 account that is 95% of the
+  account, not conservative position sizing.
 - A $0.50 credit on a put spread $15 below SPY is an example, not a reasonable
   guaranteed fill. Expected $50-$80 daily profits and an 85% win rate are not
   assumed or advertised.
@@ -26,19 +33,97 @@ daily state, paper-trading defaults, circuit breakers, and a systemd service.
   atomic Alpaca multi-leg orders.
 - Polling every five minutes is too slow for the emergency rule. The default is
   15 seconds while a position is open, with a configurable stale-quote guard.
-- The default stop is the safer `short strike + $3.00`, as requested in the
-  warning section. This is an underlying-price trigger, not a guaranteed exit
-  price.
+- An ATM spread cannot use the legacy `short strike + $3.00` stop: it would
+  trigger immediately. The active stop watches the executable spread debit and
+  exits when it reaches a configured multiple of filled entry credit.
+- **The far-OTM credit originally assumed does not exist.** Measured over 615
+  sessions, a put spread $15 below SPY paid a median credit of $0.00 and met the
+  $0.05 minimum on 7 of them. The legacy buffered configuration was a no-op,
+  and the structures that do trade return a few percent a year at best. See
+  [the credit structure measurement](docs/CREDIT_STRUCTURE.md) before funding
+  anything.
+
+## ATM 20-day-trend verdict
+
+The requested ATM/20-SMA hypothesis was tested on SPY, QQQ, and IWM using a
+12-variant grid committed before fetching results. No configuration passed the
+predeclared, cost-adjusted train/validation rule, so the live ATM strategy is
+research-blocked and the final July 20 through August 18, 2026 holdout remains
+sealed.
+
+Every daily `close > SMA20` variant lost after modeled costs. QQQ failed every
+variant. IWM crossover entries without a profit target were positive on both
+splits, but there were only 23 training and 11 validation trades. The local
+configuration therefore observes the more conservative 1.5x-stop IWM version
+in shadow mode; it is not an approved trading strategy. See
+[the ATM trend research ledger](docs/ATM_TREND_RESEARCH.md).
+
+```bash
+floor-atm-trend-research \
+  --symbol IWM \
+  --start 2024-02-01 \
+  --end 2026-08-18 \
+  --oos-start 2026-07-20
+```
+
+## Legacy buffered-spread viability
+
+The credit strategy was finally measured rather than assumed. Across 36
+declared structures and 615 training and validation sessions, the market pays
+7% to 9% of the spread width, which requires roughly a nine-in-ten win rate to
+break even. Three structures survive realistic costs; the best returns about
+3.9% per year while risking 5.4% of the account on a single session.
+
+`floor-insurance doctor` now reports `minimum_viable_equity` and fails when the
+balance cannot fund one contract. With the shipped defaults that floor is
+$9,500, so the $5,000 example account would silently skip every tick.
+
+```bash
+floor-credit-structure \
+  --start 2024-02-01 \
+  --end 2026-08-18 \
+  --oos-start 2026-07-20 \
+  --slippage-per-side 0.02 \
+  --fees-per-spread 0.10
+```
+
+Read [docs/CREDIT_STRUCTURE.md](docs/CREDIT_STRUCTURE.md) for the full table and
+the reasoning. The conclusion is that this strategy is not viable as designed.
+
+## Implied-move SPY experiment
+
+A separate research-only harness tests six predeclared SPY put-spread variants
+whose strikes are one or 1.25 ATM-straddle-implied moves below spot. It charges
+adverse fill on every leg, performs an additional cost stress, and keeps the
+final chronological holdout sealed. It is not connected to order submission.
+
+The locked run rejected all six. At one implied move, only 15 of 461 training
+sessions and six of 154 validation sessions paid the required $0.15 credit, and
+every exit style lost on both splits. At 1.25 moves there were two training
+trades and zero validation trades. See
+[the implied-move research ledger](docs/IMPLIED_MOVE_RESEARCH.md).
 
 ## Strategy defaults
 
-At 09:45 America/New_York on a regular trading day, the bot reads SPY's latest
-trade, selects today's put strikes at least $15 below SPY, and constructs a
-$1-wide bull put spread. It sizes from equity and the actual proposed credit.
-It then manages the filled spread until one of these events:
+At 09:45 America/New_York on a regular trading day, the bot first fetches
+adjusted daily bars ending strictly before that session. `TREND_MODE=above`
+allows every previous close above its contemporaneous SMA;
+`TREND_MODE=crossover` requires a fresh move from at-or-below to above. An
+ineligible or incomplete signal ends the session without an order.
 
-- spread debit reaches 50% of the filled entry credit: close and finish;
-- SPY reaches `short strike + $3`: close, count a loss, and optionally re-enter;
+The default ATM selector sells the nearest put at or below spot and buys the
+put exactly `SPREAD_WIDTH` lower. The exact credit and actual strike width
+determine risk. `MAX_TOTAL_LOSS_DOLLARS=100`, `MAX_CONTRACTS=1`, and the normal
+percentage or absolute risk budget all apply; the strictest limit wins. For
+SPY, QQQ, and IWM the bot reads the latest stock trade. For XSP it derives a
+reference from same-expiration call/put midpoint parity because this paper
+account lacks Alpaca's separate index-value data grant. Missing or stale quotes
+cause a safe skip. It then manages the filled spread until one of these events:
+
+- executable spread debit reaches `STOP_DEBIT_MULTIPLE` times filled credit:
+  close and count a loss;
+- when enabled, spread debit reaches `TAKE_PROFIT_FRACTION` of filled credit:
+  close and finish;
 - three emergency-stop losses: finish for the day;
 - 15:00 ET: cancel working orders, flatten the bot-owned spread, and finish.
 
@@ -46,7 +131,8 @@ The bot submits every spread as one atomic Alpaca multi-leg order and uses a
 `floor-insurance-*` client-order ID for crash reconciliation. It never calls an
 account-wide flatten endpoint.
 
-The default `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry
+The default `TAKE_PROFIT_FRACTION=none` holds until the spread stop or hard
+close. `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry
 after a stop. You can raise it to three to reproduce the draft circuit breaker,
 but do that only after separately validating re-entry behavior.
 
@@ -61,6 +147,11 @@ but do that only after separately validating re-entry behavior.
 Alpaca's free indicative options feed does not contain actual OPRA quotes. It
 is allowed only in paper mode here. Alpaca also does not return Greeks for 0DTE
 contracts, so this strategy does not depend on delta.
+
+XSP is European-style and cash-settled, which avoids early assignment and stock
+delivery. Alpaca currently exposes XSP to Trading API retail users only in paper
+trading, so the configuration rejects live XSP mode. Paper fills are simulated;
+they do not prove that the same order would fill in the live order book.
 
 ## Install and paper-test
 
@@ -88,8 +179,81 @@ Useful commands:
 
 ```bash
 .venv/bin/floor-insurance state
+.venv/bin/floor-insurance shadow-report
 .venv/bin/pytest --cov=floor_insurance
 ```
+
+## Archived directional research
+
+The repository retains an earlier research-only 0DTE call/put debit-spread
+backtester. It tests a no-lookahead opening-range/VWAP signal and accepts only
+modeled spreads with at least 2:1 maximum reward/risk. It is intentionally not
+wired into the trading bot and is not part of the current ATM strategy.
+
+```bash
+floor-directional-backtest \
+  --start 2024-02-01 \
+  --end 2026-08-18 \
+  --oos-start 2026-07-20 \
+  --constant-sizing
+```
+
+The initial baseline lost $728 on validation after modeled slippage and was
+rejected. Its final 22-session OOS period remains sealed. See
+[the directional research guide](docs/DIRECTIONAL_RESEARCH.md) for the exact
+assumptions, results, and historical-fill limitation.
+
+Fourteen predeclared variants have now failed the development acceptance rule,
+including six that split the breakout by the prior close of the Cboe volatility
+complex over a window extended back to February 2024. One of them appeared to
+pass until a sizing control showed the result came from compounding a different
+balance rather than from the filter. Reproduce the fixed comparison with
+`floor-directional-experiments` and see the
+[experiment ledger](docs/DIRECTIONAL_EXPERIMENTS.md). None of these models is
+available to the order-submission state machine.
+
+## Zero-capital shadow mode
+
+Shadow mode runs the complete strategy against each observed underlying and
+options quote without submitting an order. It records conservative virtual
+entries, every 15-second quote observation, triggers, exits, and modeled P&L in
+an append-only JSONL journal.
+
+```text
+ALPACA_PAPER=true
+DRY_RUN=false
+SHADOW_MODE=true
+UNDERLYING=IWM
+SIGNAL_SYMBOL=IWM
+TREND_MODE=crossover
+STRIKE_SELECTION=atm
+STOP_DEBIT_MULTIPLE=1.5
+MAX_TOTAL_LOSS_DOLLARS=100
+TAKE_PROFIT_FRACTION=none
+SHADOW_EQUITY=100
+RISK_BUDGET_DOLLARS=100
+MAX_CONTRACTS=1
+SHADOW_LOG_PATH=state/iwm_atm_crossover_shadow_events.jsonl
+```
+
+Use `OPTIONS_FEED=opra` and `STOCK_FEED=sip` only when the Alpaca credentials
+have those data entitlements. The free `indicative`/`iex` combination still
+tests software mechanics but is not actual consolidated options pricing.
+
+No fractional option is created: `SHADOW_EQUITY` is only a hypothetical sizing
+balance. The absolute budget is capped at the sizing balance, and the bot still
+requires the spread's exact maximum loss to fit. With the settings above, one
+$1-wide spread can consume almost all $100.
+
+XSP can still be selected for separate paper mechanics, with
+`SIGNAL_SYMBOL=SPY`. After enough shadow observations, Alpaca **paper** order
+submission can be enabled with `SHADOW_MODE=false` and `DRY_RUN=false`. Keep
+`ALPACA_PAPER=true`. That exercises Alpaca's simulated multi-leg fills without
+risking cash. There is currently no supported route in this bot to obtain live
+retail XSP fills through Alpaca.
+
+See [the shadow-mode guide](docs/SHADOW_MODE.md) for setup, event format,
+reporting, and the execution limitations this cannot measure.
 
 ## Telegram
 
@@ -100,8 +264,8 @@ order management; the error is sent to the local log.
 ## Backtesting without fooling ourselves
 
 The backtester requires contemporaneous bid/ask quotes for both option legs and
-the SPY price. Stock-only or option-close-only data cannot honestly test the
-entry credit, 50% take profit, or exit slippage.
+the underlying reference. Stock-only or option-close-only data cannot honestly
+test the entry credit, 50% take profit, or exit slippage.
 
 Prepared input is a CSV with one row per observation and these columns:
 
@@ -125,11 +289,13 @@ The default report reveals only the first 60% training period and next 20%
 validation period. Tune on those, write down and freeze the configuration, then
 run exactly once with `--reveal-oos` to see the final chronological 20%.
 
-This harness uses conservative executable prices: short bid minus long ask on
-entry, then short ask minus long bid on exit. It currently tests one entry per
-day. Synthetic tests verify the math and event ordering; they are not evidence
-of profitability. No real backtest result is bundled because this repository
-does not have access to a licensed historical OPRA dataset.
+The prepared-quote harness uses conservative executable prices: short bid
+minus long ask on entry, then short ask minus long bid on exit. It currently
+tests one entry per day. Synthetic tests verify the math and event ordering;
+they are not evidence of profitability. The bundled ATM research uses
+historical one-minute option
+trade bars plus explicit costs, not a licensed historical NBBO feed. Its
+rejection is documented rather than presented as executable performance.
 
 Do not add a futures/momentum regime switch until it improves validation data
 after fees and slippage, and do not repeatedly inspect the held-out segment.
@@ -184,7 +350,8 @@ second phase after paper soak testing, with REST retained as the fallback.
 
 ## Live-trading interlock
 
-Live mode is deliberately awkward. All four values are required:
+Live mode is deliberately awkward. For supported stock ETF underlyings, the
+base interlock requires:
 
 ```text
 ALPACA_PAPER=false
@@ -193,16 +360,25 @@ STOCK_FEED=sip
 OPTIONS_FEED=opra
 ```
 
+ATM mode has an additional `ATM_LIVE_CONFIRMED=true` interlock. No current ATM
+candidate passed research, so leave it false. The setting prevents an older
+live configuration from silently running the newly added strategy; it is not a
+recommendation to override the failed research gate.
+
 Even then, paper-soak the exact deployed commit first. Supervise the bot and
 keep broker access available for manual flattening. Assignment, pin risk,
 market halts, rejected exits, bad data, and exchange/broker outages cannot be
 eliminated in software.
+
+`UNDERLYING=XSP` is additionally blocked whenever `ALPACA_PAPER=false` because
+Alpaca retail live index-options trading is not currently available.
 
 ## Project layout
 
 ```text
 src/floor_insurance/  REST client, strategy, state machine, CLI, backtester
 tests/                deterministic unit and lifecycle tests
+docs/                 shadow execution and research guides
 deploy/               hardened systemd unit for an existing VPS
 .github/workflows/    Python 3.11-3.13 CI
 ```

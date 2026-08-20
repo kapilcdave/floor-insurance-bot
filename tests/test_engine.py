@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
+
+import pytest
 
 from floor_insurance.engine import TradingEngine
 from floor_insurance.models import Contract, DailyState, Phase, Quote
 from floor_insurance.notify import Notifier
 from floor_insurance.state import StateStore
+from floor_insurance.strategy import StrategySkip
 
 ET = ZoneInfo("America/New_York")
 
@@ -31,13 +34,16 @@ class FakeAlpaca:
     def account(self):
         return {"trading_blocked": False, "options_trading_level": 3, "equity": "5000"}
 
-    def latest_underlying_trade(self):
+    def daily_closes(self, _symbol, _before_date, _observations):
+        return [Decimal("100")] * 20 + [Decimal("110")]
+
+    def latest_underlying_trade(self, _expiration_date=None):
         return self.price, self.now
 
     def put_contracts(self, _date):
         return [
-            Contract("short", Decimal("535"), "2026-08-18"),
-            Contract("long", Decimal("534"), "2026-08-18"),
+            Contract("short", Decimal("550"), "2026-08-18"),
+            Contract("long", Decimal("549"), "2026-08-18"),
         ]
 
     def option_quotes(self, _symbols):
@@ -83,11 +89,48 @@ def test_dry_run_finds_valid_trade_but_submits_nothing(config):
     assert "dry run" in state.event_history[-1]["reason"]
 
 
+def test_entry_is_skipped_when_previous_close_is_not_above_average(config):
+    now = datetime(2026, 8, 18, 9, 45, tzinfo=ET)
+    fake = FakeAlpaca(now)
+    fake.daily_closes = lambda *_args: [Decimal("100")] * 20
+    bot = engine(config, fake)
+
+    bot.tick(now)
+
+    state = bot.store.load("2026-08-18")
+    assert state.phase == Phase.DONE
+    assert state.event_history[-2]["event"] == "trend signal evaluated"
+    assert state.event_history[-2]["eligible"] is False
+    assert "not eligible" in state.event_history[-1]["reason"]
+    assert fake.submissions == []
+
+
+def test_crossover_mode_uses_one_extra_completed_close(config):
+    now = datetime(2026, 8, 18, 9, 45, tzinfo=ET)
+    fake = FakeAlpaca(now)
+    observations = []
+
+    def daily_closes(_symbol, _before_date, requested):
+        observations.append(requested)
+        return [Decimal("100")] * 20 + [Decimal("110")]
+
+    fake.daily_closes = daily_closes
+    bot = engine(replace(config, trend_mode="crossover"), fake)
+
+    bot.tick(now)
+
+    assert observations == [21]
+    state = bot.store.load("2026-08-18")
+    assert state.event_history[0]["mode"] == "crossover"
+    assert state.event_history[0]["eligible"] is True
+
+
 def test_emergency_stop_submits_atomic_market_exit(config):
     now = datetime(2026, 8, 18, 10, 0, tzinfo=ET)
     config = replace(config, dry_run=False)
     fake = FakeAlpaca(now)
-    fake.price = Decimal("537.90")
+    fake.short_quote = Quote(Decimal("1.00"), Decimal("1.05"), now)
+    fake.long_quote = Quote(Decimal("0.00"), Decimal("0.05"), now)
     bot = engine(config, fake)
     bot.store.save(
         DailyState(
@@ -137,11 +180,39 @@ def test_live_entry_fill_then_take_profit_limit(config):
     assert fake.submissions[-1]["price"] == Decimal("0.25")
 
 
+def test_disabled_take_profit_holds_until_stop_or_hard_close(config):
+    now = datetime(2026, 8, 18, 10, 0, tzinfo=ET)
+    config = replace(config, dry_run=False, take_profit_fraction=None)
+    fake = FakeAlpaca(now)
+    fake.short_quote = Quote(Decimal("0.15"), Decimal("0.30"), now)
+    fake.long_quote = Quote(Decimal("0.08"), Decimal("0.10"), now)
+    bot = engine(config, fake)
+    bot.store.save(
+        DailyState(
+            "2026-08-18",
+            phase=Phase.OPEN,
+            short_symbol="short",
+            long_symbol="long",
+            short_strike="550",
+            long_strike="549",
+            quantity=1,
+            entry_credit="0.50",
+            entry_submissions=1,
+        )
+    )
+
+    bot.tick(now)
+
+    assert bot.store.load("2026-08-18").phase == Phase.OPEN
+    assert fake.submissions == []
+
+
 def test_filled_stop_counts_loss_and_finishes_at_entry_cap(config):
     now = datetime(2026, 8, 18, 10, 0, tzinfo=ET)
     config = replace(config, dry_run=False)
     fake = FakeAlpaca(now)
-    fake.price = Decimal("537.90")
+    fake.short_quote = Quote(Decimal("1.00"), Decimal("1.05"), now)
+    fake.long_quote = Quote(Decimal("0.00"), Decimal("0.05"), now)
     bot = engine(config, fake)
     bot.store.save(
         DailyState(
@@ -217,3 +288,134 @@ def test_early_close_moves_hard_close_to_noon(config):
     )
     bot.tick(now)
     assert bot.store.load("2026-08-18").exit_reason == "hard_close"
+
+
+def test_shadow_mode_tracks_virtual_trade_without_submitting_order(config):
+    entered = datetime(2026, 8, 18, 9, 45, tzinfo=ET)
+    config = replace(
+        config,
+        dry_run=False,
+        shadow_mode=True,
+        shadow_equity=Decimal("5000"),
+        shadow_log_path=config.state_path.with_name("shadow.jsonl"),
+    )
+    fake = FakeAlpaca(entered)
+    bot = engine(config, fake)
+    bot.tick(entered)
+    state = bot.store.load("2026-08-18")
+    assert state.phase == Phase.OPEN
+    assert state.shadow is True
+    assert state.active_order_id is None
+    assert state.active_client_order_id is None
+    assert fake.submissions == []
+
+    managed_at = entered.replace(hour=10, minute=0)
+    fake.now = managed_at
+    fake.short_quote = Quote(Decimal("0.15"), Decimal("0.30"), managed_at)
+    fake.long_quote = Quote(Decimal("0.08"), Decimal("0.10"), managed_at)
+    bot.tick(managed_at)
+
+    state = bot.store.load("2026-08-18")
+    assert state.phase == Phase.DONE
+    assert state.event_history[-2]["event"] == "shadow exit filled"
+    assert state.event_history[-2]["net_pnl"] == "28.00"
+    assert fake.submissions == []
+    summary = bot.shadow_journal.summary()
+    assert summary["trades"] == 1
+    assert summary["entries"] == 1
+    assert summary["observations"] == 1
+    assert summary["entries_without_exit"] == 0
+    assert summary["wins"] == 1
+    assert summary["total_net_pnl"] == "28.00"
+
+
+def test_absolute_risk_budget_sizes_one_spread(config):
+    entered = datetime(2026, 8, 18, 9, 45, tzinfo=ET)
+    config = replace(
+        config,
+        dry_run=False,
+        shadow_mode=True,
+        symbol="XSP",
+        risk_budget_dollars=Decimal("100"),
+        shadow_equity=Decimal("100"),
+        max_contracts=1,
+        shadow_log_path=config.state_path.with_name("xsp-shadow.jsonl"),
+    )
+    fake = FakeAlpaca(entered)
+    fake.short_quote = Quote(Decimal("0.08"), Decimal("0.09"), entered)
+    fake.long_quote = Quote(Decimal("0.02"), Decimal("0.03"), entered)
+
+    bot = engine(config, fake)
+    bot.tick(entered)
+
+    state = bot.store.load("2026-08-18")
+    assert state.phase == Phase.OPEN
+    assert state.quantity == 1
+    assert state.event_history[-1]["max_loss_per_contract"] == "95.00"
+
+
+def test_shadow_mode_accepts_penny_credit_and_small_timestamp_skew(config):
+    entered = datetime(2026, 8, 18, 9, 45, tzinfo=ET)
+    config = replace(
+        config,
+        dry_run=False,
+        shadow_mode=True,
+        max_quote_age_seconds=90,
+        shadow_log_path=config.state_path.with_name("shadow-penny.jsonl"),
+    )
+    fake = FakeAlpaca(entered)
+    fake.now = entered + timedelta(seconds=65)
+    fake.short_quote = Quote(
+        Decimal("0.03"), Decimal("0.04"), entered - timedelta(seconds=37)
+    )
+    fake.long_quote = Quote(
+        Decimal("0"), Decimal("0.01"), entered - timedelta(seconds=34)
+    )
+
+    bot = engine(config, fake)
+    bot.tick(entered)
+
+    state = bot.store.load("2026-08-18")
+    assert state.phase == Phase.OPEN
+    assert state.shadow is True
+    assert state.entry_credit == "0.02"
+    assert fake.submissions == []
+
+
+def test_timestamp_beyond_configured_skew_is_rejected(config):
+    entered = datetime(2026, 8, 18, 9, 45, tzinfo=ET)
+    config = replace(config, max_quote_age_seconds=90)
+    fake = FakeAlpaca(entered)
+    fake.now = entered + timedelta(seconds=91)
+
+    with pytest.raises(StrategySkip, match="ahead of the bot clock"):
+        engine(config, fake).tick(entered)
+
+
+def test_shadow_stop_has_priority_and_applies_modeled_fees(config):
+    entered = datetime(2026, 8, 18, 9, 45, tzinfo=ET)
+    config = replace(
+        config,
+        dry_run=False,
+        shadow_mode=True,
+        shadow_equity=Decimal("5000"),
+        shadow_fees_per_spread=Decimal("0.06"),
+        shadow_log_path=config.state_path.with_name("shadow-stop.jsonl"),
+    )
+    fake = FakeAlpaca(entered)
+    bot = engine(config, fake)
+    bot.tick(entered)
+
+    stopped_at = entered.replace(hour=10, minute=0)
+    fake.now = stopped_at
+    fake.short_quote = Quote(Decimal("0.95"), Decimal("1.08"), stopped_at)
+    fake.long_quote = Quote(Decimal("0.08"), Decimal("0.08"), stopped_at)
+    bot.tick(stopped_at)
+
+    state = bot.store.load("2026-08-18")
+    assert state.phase == Phase.DONE
+    assert state.losses == 1
+    summary = bot.shadow_journal.summary()
+    assert summary["exit_reasons"] == {"emergency_stop": 1}
+    assert summary["total_net_pnl"] == "-50.06"
+    assert fake.submissions == []

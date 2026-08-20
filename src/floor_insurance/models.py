@@ -44,6 +44,9 @@ class DailyState:
     active_order_id: str | None = None
     active_client_order_id: str | None = None
     exit_reason: str | None = None
+    shadow: bool = False
+    entry_filled_at: str | None = None
+    entry_underlying: str | None = None
     last_event: str = "fresh day"
     event_history: list[dict[str, Any]] = field(default_factory=list)
 
