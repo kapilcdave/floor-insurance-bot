@@ -36,7 +36,41 @@ survived forward OPRA bid/ask collection.
 
 ## Result
 
-Pending the first locked run.
+Reject every variant. No configuration passed the predeclared rule, and the
+July 20 through August 19, 2026 holdout remains sealed with no option cache
+files created for it.
+
+The inspected sample contained 461 training and 154 validation sessions. At
+one implied move, only 15 training sessions and six validation sessions met the
+$0.15 cost-adjusted credit floor. All three exits lost on both splits:
+
+| Variant | Train trades | Train avg | Train PF | Validation trades | Validation avg | Validation PF |
+|---|---:|---:|---:|---:|---:|---:|
+| 50% target | 15 | -$2.30 | 0.7016 | 6 | -$1.43 | 0.7485 |
+| 75% target | 15 | -$2.30 | 0.6102 | 6 | -$3.43 | 0.3977 |
+| Hold to stop/close | 15 | -$1.77 | 0.8047 | 6 | -$0.60 | 0.8947 |
+
+At 1.25 implied moves, there were only two training trades and no validation
+trades. One two-trade row was positive, but it is not evidence and failed the
+minimum sample gate by almost two orders of magnitude. Raising adverse fill to
+$0.03 per leg reduced the one-move training sample to seven trades; every
+training average remained negative.
+
+The structural failure is the same as the fixed-distance strategy: once the
+short strike is far enough away to feel safe, a $1-wide spread rarely pays 15
+cents after conservative costs. The few qualifying sessions did not compensate
+for their losing exits.
+
+At 14:44 ET on August 20, 2026, a read-only live mechanics check using Alpaca's
+free indicative feed observed SPY at 763.55 and a 1.38-point ATM-straddle move.
+The one-move 762/761 put spread showed a $0.10 executable credit; the 1.25-move
+761/760 spread showed $0.02. Both failed the locked minimum. This late-day,
+non-OPRA snapshot is not part of the backtest and is not evidence about a 10:00
+fill.
+
+The result does not authorize an implied-move selector in the trading engine.
+Changing the move multiple, minimum credit, time, or stop after this result
+would be a new hypothesis requiring a new pre-registration and untouched data.
 
 ## Reproduce without revealing the holdout
 

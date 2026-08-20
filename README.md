@@ -96,7 +96,12 @@ A separate research-only harness tests six predeclared SPY put-spread variants
 whose strikes are one or 1.25 ATM-straddle-implied moves below spot. It charges
 adverse fill on every leg, performs an additional cost stress, and keeps the
 final chronological holdout sealed. It is not connected to order submission.
-See [the implied-move pre-registration](docs/IMPLIED_MOVE_RESEARCH.md).
+
+The locked run rejected all six. At one implied move, only 15 of 461 training
+sessions and six of 154 validation sessions paid the required $0.15 credit, and
+every exit style lost on both splits. At 1.25 moves there were two training
+trades and zero validation trades. See
+[the implied-move research ledger](docs/IMPLIED_MOVE_RESEARCH.md).
 
 ## Strategy defaults
 
