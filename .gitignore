@@ -12,4 +12,5 @@ state/*.json
 state/*.jsonl
 state/*.csv
 state/backtest-cache/
+state/atm-trend-cache*/
 !state/.gitkeep
