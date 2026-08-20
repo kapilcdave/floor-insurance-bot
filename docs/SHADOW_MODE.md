@@ -11,22 +11,33 @@ ALPACA_PAPER=true
 DRY_RUN=false
 SHADOW_MODE=true
 
+UNDERLYING=IWM
+SIGNAL_SYMBOL=IWM
+TREND_MODE=crossover
+STRIKE_SELECTION=atm
+SPREAD_WIDTH=1
+STOP_DEBIT_MULTIPLE=1.5
+MAX_TOTAL_LOSS_DOLLARS=100
+TAKE_PROFIT_FRACTION=none
+
 # Actual OPRA top-of-book data requires the corresponding Alpaca entitlement.
 OPTIONS_FEED=opra
 STOCK_FEED=sip
 
 # A hypothetical portfolio used only for sizing.
-SHADOW_EQUITY=10000
+SHADOW_EQUITY=100
+RISK_BUDGET_DOLLARS=100
+MAX_CONTRACTS=1
 SHADOW_FEES_PER_SPREAD=0
 SHADOW_MIN_CREDIT=0.01
 SHADOW_LOG_PATH=state/shadow_events.jsonl
 MAX_QUOTE_AGE_SECONDS=90
 ```
 
-`SHADOW_EQUITY=10000` normally permits one $1-wide contract under the 1% rule
-even when credit is small. To test the intended $5,000 deployment exactly, set
-it to `5000`; expect the strategy to skip whenever maximum spread loss exceeds
-$50. Shadow equity never changes an Alpaca balance.
+The absolute risk budget is still capped by `SHADOW_EQUITY` and
+`MAX_TOTAL_LOSS_DOLLARS`. No fractional contract or simulated leverage is
+created. A one-contract $1 spread can consume nearly all of a hypothetical
+$100 balance. Shadow equity never changes an Alpaca balance.
 
 `SHADOW_FEES_PER_SPREAD` is a configurable round-trip estimate. Keep it at zero
 only if you deliberately want gross P&L.
@@ -48,8 +59,8 @@ floor-insurance run
 
 Each successful entry is treated as immediately filled at the conservative
 executable credit: short bid minus long ask. Every 15-second observation records
-SPY, both legs' bid/ask, the executable closing debit, stop level, and profit
-target. Virtual exits use short ask minus long bid.
+the underlying, both legs' bid/ask, the executable closing debit, spread-debit
+stop, and optional profit target. Virtual exits use short ask minus long bid.
 
 Watch raw events:
 
