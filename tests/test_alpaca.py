@@ -59,6 +59,20 @@ class ChainSession(Session):
         return Response({"snapshots": snapshots, "next_page_token": None})
 
 
+class DailyBarsSession(Session):
+    def request(self, method, url, **kwargs):
+        self.calls.append((method, url, kwargs))
+        return Response(
+            {
+                "bars": [
+                    {"t": "2026-08-17T04:00:00Z", "c": "640.25"},
+                    {"t": "2026-08-18T04:00:00Z", "c": "999.00"},
+                ],
+                "next_page_token": None,
+            }
+        )
+
+
 def test_credit_spread_is_atomic_and_credit_price_is_negative(config):
     session = Session()
     client = AlpacaClient(config, session=session)
@@ -106,3 +120,17 @@ def test_xsp_reference_uses_median_call_put_parity(config):
     assert price == Decimal("770.700")
     assert observed_at == datetime(2026, 8, 19, 15, 45, tzinfo=timezone.utc)
     assert {call[2]["params"]["type"] for call in session.calls} == {"call", "put"}
+
+
+def test_daily_closes_exclude_the_entry_session_even_if_api_returns_it(config):
+    session = DailyBarsSession()
+    client = AlpacaClient(config, session=session)
+
+    closes = client.daily_closes("SPY", "2026-08-18", 21)
+
+    assert closes == [Decimal("640.25")]
+    method, url, kwargs = session.calls[0]
+    assert method == "GET"
+    assert url.endswith("/v2/stocks/SPY/bars")
+    assert kwargs["params"]["timeframe"] == "1Day"
+    assert kwargs["params"]["adjustment"] == "all"

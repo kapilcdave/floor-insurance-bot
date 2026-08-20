@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from statistics import median
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -94,6 +95,49 @@ class AlpacaClient:
             params={"start": trading_date, "end": trading_date},
         )
         return days[0] if days else None
+
+    def daily_closes(
+        self, symbol: str, before_date: str, observations: int
+    ) -> list[Decimal]:
+        """Return adjusted daily closes strictly before ``before_date``.
+
+        The API request may include an in-progress bar for the entry session.
+        Filtering by the bar's New York session date here makes the no-lookahead
+        boundary explicit rather than dependent on provider response timing.
+        """
+
+        if observations < 1:
+            raise ValueError("observations must be positive")
+        boundary = date.fromisoformat(before_date)
+        start = boundary - timedelta(days=max(45, observations * 3))
+        params: dict[str, Any] = {
+            "timeframe": "1Day",
+            "start": start.isoformat(),
+            "end": (boundary + timedelta(days=1)).isoformat(),
+            "adjustment": "all",
+            "feed": self.config.stock_feed,
+            "limit": 1000,
+            "sort": "asc",
+        }
+        by_session: dict[date, Decimal] = {}
+        while True:
+            data = self._request(
+                "GET",
+                self.config.data_base_url,
+                f"/v2/stocks/{symbol}/bars",
+                params=params,
+            )
+            for bar in data.get("bars", []):
+                session_date = _timestamp(bar["t"]).astimezone(
+                    ZoneInfo("America/New_York")
+                ).date()
+                if session_date < boundary:
+                    by_session[session_date] = Decimal(str(bar["c"]))
+            token = data.get("next_page_token")
+            if not token:
+                break
+            params["page_token"] = token
+        return [by_session[day] for day in sorted(by_session)][-observations:]
 
     def latest_underlying_trade(
         self, expiration_date: str | None = None
