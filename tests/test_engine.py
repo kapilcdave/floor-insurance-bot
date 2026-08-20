@@ -34,6 +34,9 @@ class FakeAlpaca:
     def account(self):
         return {"trading_blocked": False, "options_trading_level": 3, "equity": "5000"}
 
+    def daily_closes(self, _symbol, _before_date, _observations):
+        return [Decimal("100")] * 20 + [Decimal("110")]
+
     def latest_underlying_trade(self, _expiration_date=None):
         return self.price, self.now
 
@@ -84,6 +87,42 @@ def test_dry_run_finds_valid_trade_but_submits_nothing(config):
     assert state.quantity == 1
     assert fake.submissions == []
     assert "dry run" in state.event_history[-1]["reason"]
+
+
+def test_entry_is_skipped_when_previous_close_is_not_above_average(config):
+    now = datetime(2026, 8, 18, 9, 45, tzinfo=ET)
+    fake = FakeAlpaca(now)
+    fake.daily_closes = lambda *_args: [Decimal("100")] * 20
+    bot = engine(config, fake)
+
+    bot.tick(now)
+
+    state = bot.store.load("2026-08-18")
+    assert state.phase == Phase.DONE
+    assert state.event_history[-2]["event"] == "trend signal evaluated"
+    assert state.event_history[-2]["eligible"] is False
+    assert "not eligible" in state.event_history[-1]["reason"]
+    assert fake.submissions == []
+
+
+def test_crossover_mode_uses_one_extra_completed_close(config):
+    now = datetime(2026, 8, 18, 9, 45, tzinfo=ET)
+    fake = FakeAlpaca(now)
+    observations = []
+
+    def daily_closes(_symbol, _before_date, requested):
+        observations.append(requested)
+        return [Decimal("100")] * 20 + [Decimal("110")]
+
+    fake.daily_closes = daily_closes
+    bot = engine(replace(config, trend_mode="crossover"), fake)
+
+    bot.tick(now)
+
+    assert observations == [21]
+    state = bot.store.load("2026-08-18")
+    assert state.event_history[0]["mode"] == "crossover"
+    assert state.event_history[0]["eligible"] is True
 
 
 def test_emergency_stop_submits_atomic_market_exit(config):

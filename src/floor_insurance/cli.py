@@ -89,6 +89,9 @@ def doctor(config: Config, alpaca: AlpacaClient) -> int:
         "next_close": clock.get("next_close"),
         "stock_feed": config.stock_feed,
         "options_feed": config.options_feed,
+        "signal_symbol": config.signal_symbol,
+        "trend_window": config.trend_window,
+        "trend_mode": config.trend_mode,
         "telegram_configured": bool(config.telegram_token and config.telegram_chat_id),
         "sizing_balance": str(balance),
         "risk_budget_dollars": (

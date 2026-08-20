@@ -58,6 +58,9 @@ class Config:
     stock_feed: str
     options_feed: str
     symbol: str
+    signal_symbol: str
+    trend_window: int
+    trend_mode: str
     buffer_dollars: Decimal
     spread_width: Decimal
     stop_buffer: Decimal
@@ -113,6 +116,9 @@ class Config:
             ).strip().lower(),
             options_feed=options_feed,
             symbol=os.getenv("UNDERLYING", "SPY").strip().upper(),
+            signal_symbol=os.getenv("SIGNAL_SYMBOL", "SPY").strip().upper(),
+            trend_window=_int("TREND_WINDOW", 20),
+            trend_mode=os.getenv("TREND_MODE", "above").strip().lower(),
             buffer_dollars=_decimal("BUFFER_DOLLARS", "15"),
             spread_width=_decimal("SPREAD_WIDTH", "1"),
             stop_buffer=_decimal("STOP_BUFFER", "3"),
@@ -179,6 +185,12 @@ class Config:
             raise ConfigError("SHADOW_LOG_PATH and STATE_PATH must be different files")
         if self.symbol not in {"SPY", "XSP"}:
             raise ConfigError("UNDERLYING must be SPY or XSP")
+        if not self.signal_symbol:
+            raise ConfigError("SIGNAL_SYMBOL is required")
+        if self.trend_window < 2:
+            raise ConfigError("TREND_WINDOW must be at least 2")
+        if self.trend_mode not in {"above", "crossover"}:
+            raise ConfigError("TREND_MODE must be above or crossover")
         if self.symbol == "XSP" and not self.paper:
             raise ConfigError(
                 "live XSP trading is blocked: Alpaca retail currently supports "

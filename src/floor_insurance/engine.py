@@ -21,6 +21,7 @@ from .strategy import (
     size_contracts,
     size_contracts_for_budget,
 )
+from .trend import TrendMode, trend_signal
 
 LOG = logging.getLogger(__name__)
 TERMINAL_FAILURES = {"canceled", "expired", "rejected", "replaced", "suspended"}
@@ -113,6 +114,49 @@ class TradingEngine:
         )
 
     def _enter(self, state: DailyState, now: datetime) -> None:
+        mode = TrendMode(self.config.trend_mode)
+        observations = self.config.trend_window + (
+            1 if mode == TrendMode.CROSSOVER else 0
+        )
+        closes = self.alpaca.daily_closes(
+            self.config.signal_symbol,
+            now.date().isoformat(),
+            observations,
+        )
+        try:
+            signal = trend_signal(
+                closes,
+                window=self.config.trend_window,
+                mode=mode,
+            )
+        except ValueError as exc:
+            self._finish(state, now, f"trend signal unavailable: {exc}")
+            return
+        state.event(
+            "trend signal evaluated",
+            now,
+            signal_symbol=self.config.signal_symbol,
+            mode=signal.mode.value,
+            eligible=signal.eligible,
+            close=str(signal.close),
+            moving_average=str(signal.moving_average),
+            previous_close=(
+                str(signal.previous_close) if signal.previous_close is not None else None
+            ),
+            previous_moving_average=(
+                str(signal.previous_moving_average)
+                if signal.previous_moving_average is not None
+                else None
+            ),
+        )
+        if not signal.eligible:
+            self._finish(
+                state,
+                now,
+                f"{self.config.signal_symbol} trend signal is not eligible",
+            )
+            return
+
         account = self.alpaca.account()
         if account.get("trading_blocked") and not self.config.shadow_mode:
             self._finish(state, now, "Alpaca account is trading-blocked")

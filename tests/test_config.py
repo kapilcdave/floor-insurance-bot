@@ -45,6 +45,15 @@ def test_absolute_risk_budget_must_be_positive(config):
         replace(config, risk_budget_dollars=Decimal("0")).validate()
 
 
+def test_trend_configuration_is_validated(config):
+    with pytest.raises(ConfigError, match="TREND_WINDOW"):
+        replace(config, trend_window=1).validate()
+    with pytest.raises(ConfigError, match="TREND_MODE"):
+        replace(config, trend_mode="sometimes").validate()
+    with pytest.raises(ConfigError, match="SIGNAL_SYMBOL"):
+        replace(config, signal_symbol="").validate()
+
+
 def test_dry_run_and_shadow_mode_are_mutually_exclusive(config):
     with pytest.raises(ConfigError, match="cannot both be true"):
         replace(config, dry_run=True, shadow_mode=True).validate()
