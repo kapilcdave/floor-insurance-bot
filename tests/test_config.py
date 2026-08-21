@@ -114,3 +114,57 @@ def test_minimum_viable_equity_exposes_the_silent_no_op(config):
         shadow_mode=True,
         risk_budget_dollars=Decimal("100"),
     ).minimum_viable_equity() == Decimal("99.00")
+
+
+def paper_probe_config(config):
+    return replace(
+        config,
+        paper_probe_mode=True,
+        dry_run=False,
+        shadow_mode=False,
+        paper=True,
+        symbol="SPY",
+        signal_symbol="SPY",
+        strike_selection="credit_target",
+        spread_width=Decimal("1"),
+        min_credit=Decimal("0.30"),
+        risk_budget_dollars=Decimal("100"),
+        max_total_loss_dollars=Decimal("100"),
+        max_contracts=1,
+        max_daily_entries=1,
+        take_profit_fraction=None,
+    )
+
+
+def test_paper_probe_configuration_accepts_only_bounded_paper_orders(config):
+    probe = paper_probe_config(config)
+    probe.validate()
+
+    with pytest.raises(ConfigError, match="paper-only"):
+        replace(
+            probe,
+            paper=False,
+            live_confirmed=True,
+            options_feed="opra",
+            stock_feed="sip",
+        ).validate()
+    with pytest.raises(ConfigError, match="DRY_RUN=false"):
+        replace(probe, shadow_mode=True).validate()
+    with pytest.raises(ConfigError, match="UNDERLYING=SPY"):
+        replace(probe, symbol="IWM").validate()
+    with pytest.raises(ConfigError, match="MAX_CONTRACTS=1"):
+        replace(probe, max_contracts=2).validate()
+    with pytest.raises(ConfigError, match="at most 100"):
+        replace(probe, max_total_loss_dollars=Decimal("101")).validate()
+
+
+def test_credit_target_selector_is_blocked_from_live_trading(config):
+    with pytest.raises(ConfigError, match="paper-only"):
+        replace(
+            config,
+            paper=False,
+            live_confirmed=True,
+            options_feed="opra",
+            stock_feed="sip",
+            strike_selection="credit_target",
+        ).validate()

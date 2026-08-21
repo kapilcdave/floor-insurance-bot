@@ -103,6 +103,11 @@ class Config:
     shadow_equity: Decimal
     shadow_fees_per_spread: Decimal
     shadow_log_path: Path
+    paper_probe_mode: bool
+    probe_max_otm_dollars: Decimal
+    max_leg_quote_width: Decimal
+    entry_fill_timeout_seconds: int
+    paper_probe_log_path: Path
 
     @classmethod
     def from_env(cls, *, require_credentials: bool = True) -> "Config":
@@ -172,6 +177,13 @@ class Config:
             shadow_log_path=Path(
                 os.getenv("SHADOW_LOG_PATH", "state/shadow_events.jsonl")
             ),
+            paper_probe_mode=_bool("PAPER_PROBE_MODE", False),
+            probe_max_otm_dollars=_decimal("PROBE_MAX_OTM_DOLLARS", "10"),
+            max_leg_quote_width=_decimal("MAX_LEG_QUOTE_WIDTH", "0.10"),
+            entry_fill_timeout_seconds=_int("ENTRY_FILL_TIMEOUT_SECONDS", 60),
+            paper_probe_log_path=Path(
+                os.getenv("PAPER_PROBE_LOG_PATH", "state/paper_probe_events.jsonl")
+            ),
         )
         cfg.validate(require_credentials=require_credentials)
         return cfg
@@ -204,6 +216,8 @@ class Config:
             )
         if self.shadow_log_path == self.state_path:
             raise ConfigError("SHADOW_LOG_PATH and STATE_PATH must be different files")
+        if self.paper_probe_log_path == self.state_path:
+            raise ConfigError("PAPER_PROBE_LOG_PATH and STATE_PATH must be different files")
         if self.symbol not in {"SPY", "QQQ", "IWM", "XSP"}:
             raise ConfigError("UNDERLYING must be SPY, QQQ, IWM, or XSP")
         if not self.signal_symbol:
@@ -212,13 +226,15 @@ class Config:
             raise ConfigError("TREND_WINDOW must be at least 2")
         if self.trend_mode not in {"above", "crossover"}:
             raise ConfigError("TREND_MODE must be above or crossover")
-        if self.strike_selection not in {"atm", "buffered"}:
-            raise ConfigError("STRIKE_SELECTION must be atm or buffered")
+        if self.strike_selection not in {"atm", "buffered", "credit_target"}:
+            raise ConfigError("STRIKE_SELECTION must be atm, buffered, or credit_target")
         if self.symbol == "XSP" and not self.paper:
             raise ConfigError(
                 "live XSP trading is blocked: Alpaca retail currently supports "
                 "XSP only in paper trading"
             )
+        if self.strike_selection == "credit_target" and not self.paper:
+            raise ConfigError("credit-target order probing is paper-only")
         if not self.paper and not self.live_confirmed:
             raise ConfigError(
                 "live endpoint blocked: set LIVE_TRADING_CONFIRMED=true as a second opt-in"
@@ -242,6 +258,8 @@ class Config:
             raise ConfigError("OPTIONS_FEED must be indicative or opra")
         if min(self.spread_width, self.buffer_dollars, self.stop_buffer) <= 0:
             raise ConfigError("spread width, strike buffer, and stop buffer must be positive")
+        if min(self.probe_max_otm_dollars, self.max_leg_quote_width) <= 0:
+            raise ConfigError("probe OTM range and leg quote width must be positive")
         if self.stop_debit_multiple <= 1:
             raise ConfigError("STOP_DEBIT_MULTIPLE must be greater than one")
         if self.max_total_loss_dollars <= 0:
@@ -264,8 +282,41 @@ class Config:
             raise ConfigError("contract and loss caps must be positive")
         if min(self.poll_seconds_idle, self.poll_seconds_open) < 1:
             raise ConfigError("poll intervals must be positive")
-        if min(self.request_timeout_seconds, self.max_quote_age_seconds) < 1:
-            raise ConfigError("request timeout and quote age must be positive")
+        if min(
+            self.request_timeout_seconds,
+            self.max_quote_age_seconds,
+            self.entry_fill_timeout_seconds,
+        ) < 1:
+            raise ConfigError("request timeout, quote age, and fill timeout must be positive")
+        if self.paper_probe_mode:
+            if not self.paper:
+                raise ConfigError("PAPER_PROBE_MODE is paper-only")
+            if self.dry_run or self.shadow_mode:
+                raise ConfigError(
+                    "PAPER_PROBE_MODE requires DRY_RUN=false and SHADOW_MODE=false"
+                )
+            if self.symbol != "SPY" or self.strike_selection != "credit_target":
+                raise ConfigError(
+                    "PAPER_PROBE_MODE requires UNDERLYING=SPY and "
+                    "STRIKE_SELECTION=credit_target"
+                )
+            if self.spread_width != Decimal("1"):
+                raise ConfigError("PAPER_PROBE_MODE requires SPREAD_WIDTH=1")
+            if self.max_contracts != 1 or self.max_daily_entries != 1:
+                raise ConfigError(
+                    "PAPER_PROBE_MODE requires MAX_CONTRACTS=1 and MAX_DAILY_ENTRIES=1"
+                )
+            if (
+                self.risk_budget_dollars is None
+                or self.risk_budget_dollars > Decimal("100")
+                or self.max_total_loss_dollars > Decimal("100")
+            ):
+                raise ConfigError(
+                    "PAPER_PROBE_MODE requires RISK_BUDGET_DOLLARS at most 100 "
+                    "and MAX_TOTAL_LOSS_DOLLARS at most 100"
+                )
+            if self.take_profit_fraction is not None:
+                raise ConfigError("PAPER_PROBE_MODE requires TAKE_PROFIT_FRACTION=none")
         try:
             entry = time.fromisoformat(self.entry_time)
             entry_cutoff = time.fromisoformat(self.entry_cutoff_time)

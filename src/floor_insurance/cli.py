@@ -14,6 +14,7 @@ from .alpaca import AlpacaClient, AlpacaError
 from .config import Config, ConfigError
 from .engine import TradingEngine
 from .notify import Notifier
+from .probe import PaperProbeJournal
 from .shadow import ShadowJournal
 from .state import StateStore
 from .strategy import StrategySkip
@@ -26,7 +27,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("run", "once", "doctor", "state", "shadow-report"),
+        choices=("run", "once", "doctor", "state", "shadow-report", "probe-report"),
         default="run",
     )
     return parser
@@ -65,6 +66,21 @@ def _shadow_note(
         LOG.exception("could not append %s to shadow journal", event)
 
 
+def _probe_note(
+    engine: TradingEngine, config: Config, event: str, **details: object
+) -> None:
+    if not config.paper_probe_mode:
+        return
+    try:
+        engine.probe_journal.write(
+            event,
+            datetime.now(ZoneInfo(config.timezone)),
+            **details,
+        )
+    except OSError:
+        LOG.exception("could not append %s to paper probe journal", event)
+
+
 def doctor(config: Config, alpaca: AlpacaClient) -> int:
     account = alpaca.account()
     clock = alpaca.clock()
@@ -82,6 +98,10 @@ def doctor(config: Config, alpaca: AlpacaClient) -> int:
         "shadow_mode": config.shadow_mode,
         "shadow_equity": str(config.shadow_equity),
         "shadow_log_path": str(config.shadow_log_path),
+        "paper_probe_mode": config.paper_probe_mode,
+        "paper_probe_log_path": str(config.paper_probe_log_path),
+        "entry_fill_timeout_seconds": config.entry_fill_timeout_seconds,
+        "max_leg_quote_width": str(config.max_leg_quote_width),
         "account_status": account.get("status"),
         "trading_blocked": account.get("trading_blocked"),
         "options_trading_level": account.get("options_trading_level"),
@@ -136,10 +156,15 @@ def main() -> int:
     args = _parser().parse_args()
     try:
         config = Config.from_env(
-            require_credentials=args.command not in {"state", "shadow-report"}
+            require_credentials=args.command
+            not in {"state", "shadow-report", "probe-report"}
         )
         if args.command == "shadow-report":
             print(json.dumps(ShadowJournal(config.shadow_log_path).summary(), indent=2))
+            return 0
+        if args.command == "probe-report":
+            report = PaperProbeJournal(config.paper_probe_log_path).summary()
+            print(json.dumps(report, indent=2))
             return 0
         engine, alpaca = _components(config)
         if args.command == "doctor":
@@ -154,6 +179,7 @@ def main() -> int:
             except StrategySkip as exc:
                 LOG.info("strategy skipped this tick: %s", exc)
                 _shadow_note(engine, config, "shadow_skip", reason=str(exc))
+                _probe_note(engine, config, "probe_skip", reason=str(exc))
             return 0
 
         stopping = False
@@ -176,6 +202,7 @@ def main() -> int:
             except StrategySkip as exc:
                 LOG.info("strategy skipped this tick: %s", exc)
                 _shadow_note(engine, config, "shadow_skip", reason=str(exc))
+                _probe_note(engine, config, "probe_skip", reason=str(exc))
                 delay = config.poll_seconds_idle
             except (AlpacaError, OSError, RuntimeError) as exc:
                 LOG.exception("tick failed; state preserved and retrying")
@@ -183,6 +210,13 @@ def main() -> int:
                     engine,
                     config,
                     "shadow_error",
+                    error_type=type(exc).__name__,
+                    message=str(exc),
+                )
+                _probe_note(
+                    engine,
+                    config,
+                    "probe_error",
                     error_type=type(exc).__name__,
                     message=str(exc),
                 )

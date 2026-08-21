@@ -68,6 +68,35 @@ class FakeAlpaca:
         return None
 
 
+class ProbeAlpaca(FakeAlpaca):
+    def __init__(self, now: datetime):
+        super().__init__(now)
+        self.canceled = []
+        self.quotes = {
+            "SPY-P-546": Quote(Decimal("0.03"), Decimal("0.05"), now),
+            "SPY-P-547": Quote(Decimal("0.25"), Decimal("0.27"), now),
+            "SPY-P-548": Quote(Decimal("0.58"), Decimal("0.60"), now),
+            "SPY-P-549": Quote(Decimal("0.80"), Decimal("0.82"), now),
+            "SPY-P-550": Quote(Decimal("1.10"), Decimal("1.12"), now),
+        }
+
+    def daily_closes(self, *_args):
+        raise AssertionError("paper probe must not evaluate a directional signal")
+
+    def put_contracts(self, _date):
+        return [
+            Contract(f"SPY-P-{strike}", Decimal(str(strike)), "2026-08-18")
+            for strike in range(546, 551)
+        ]
+
+    def option_quotes(self, symbols, *, allow_missing=False):
+        return {symbol: self.quotes[symbol] for symbol in symbols}
+
+    def cancel_order(self, order_id):
+        self.canceled.append(order_id)
+        super().cancel_order(order_id)
+
+
 def engine(config, fake):
     return TradingEngine(
         config,
@@ -75,6 +104,99 @@ def engine(config, fake):
         StateStore(config.state_path),
         Notifier(None, None, 1),
     )
+
+
+def probe_config(config):
+    return replace(
+        config,
+        paper_probe_mode=True,
+        dry_run=False,
+        shadow_mode=False,
+        symbol="SPY",
+        signal_symbol="SPY",
+        strike_selection="credit_target",
+        spread_width=Decimal("1"),
+        min_credit=Decimal("0.30"),
+        risk_budget_dollars=Decimal("100"),
+        max_total_loss_dollars=Decimal("100"),
+        max_contracts=1,
+        max_daily_entries=1,
+        take_profit_fraction=None,
+        probe_max_otm_dollars=Decimal("3"),
+        max_leg_quote_width=Decimal("0.10"),
+        entry_fill_timeout_seconds=60,
+        paper_probe_log_path=config.state_path.with_name("probe.jsonl"),
+    )
+
+
+def test_paper_probe_submits_fixed_limit_and_cancels_without_chasing(config):
+    entered = datetime(2026, 8, 18, 10, 0, tzinfo=ET)
+    config = probe_config(config)
+    fake = ProbeAlpaca(entered)
+    bot = engine(config, fake)
+
+    bot.tick(entered)
+
+    state = bot.store.load("2026-08-18")
+    assert state.phase == Phase.ENTRY_PENDING
+    assert state.short_strike == "548"
+    assert state.long_strike == "547"
+    assert fake.submissions[0]["price"] == Decimal("0.30")
+    assert fake.submissions[0]["opening"] is True
+    assert fake.submissions[0]["quantity"] == 1
+
+    fake.now = entered + timedelta(seconds=59)
+    bot.tick(fake.now)
+    assert fake.canceled == []
+
+    fake.now = entered + timedelta(seconds=60)
+    bot.tick(fake.now)
+    state = bot.store.load("2026-08-18")
+    assert fake.canceled == ["order-1"]
+    assert state.phase == Phase.DONE
+    assert len(fake.submissions) == 1
+    report = bot.probe_journal.summary()
+    assert report["submitted"] == 1
+    assert report["filled"] == 0
+    assert report["unfilled"] == 1
+
+
+def test_paper_probe_records_actual_broker_fill(config):
+    entered = datetime(2026, 8, 18, 10, 0, tzinfo=ET)
+    config = probe_config(config)
+    fake = ProbeAlpaca(entered)
+    bot = engine(config, fake)
+    bot.tick(entered)
+    fake.orders["order-1"].update(
+        status="filled", filled_qty="1", filled_avg_price="-0.32"
+    )
+
+    fake.now = entered + timedelta(seconds=20)
+    bot.tick(fake.now)
+
+    state = bot.store.load("2026-08-18")
+    assert state.phase == Phase.OPEN
+    assert state.entry_credit == "0.32"
+    report = bot.probe_journal.summary()
+    assert report["submitted"] == 1
+    assert report["filled"] == 1
+    assert report["unfilled"] == 0
+
+
+def test_paper_probe_skips_when_no_spread_reaches_target(config):
+    entered = datetime(2026, 8, 18, 10, 0, tzinfo=ET)
+    config = probe_config(config)
+    fake = ProbeAlpaca(entered)
+    fake.quotes = {
+        symbol: Quote(Decimal("0.01"), Decimal("0.02"), entered)
+        for symbol in fake.quotes
+    }
+    bot = engine(config, fake)
+
+    with pytest.raises(StrategySkip, match=r"at least \$0.30"):
+        bot.tick(entered)
+
+    assert fake.submissions == []
 
 
 def test_dry_run_finds_valid_trade_but_submits_nothing(config):

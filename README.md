@@ -1,9 +1,9 @@
 # Floor Insurance Bot
 
-A small, auditable 0DTE credit-spread research bot for Alpaca. The active local
-setup observes an IWM ATM bull-put spread after a completed-close 20-day SMA
-crossover in zero-order shadow mode. SPY, QQQ, and paper-only XSP remain
-supported. It is
+A small, auditable 0DTE credit-spread research bot for Alpaca. It includes an
+IWM zero-order shadow experiment and a strictly paper-only SPY limit probe that
+tests unchanged atomic order fills against Alpaca's simulator. SPY, QQQ, IWM,
+and paper-only XSP remain supported by the broader research engine. It is
 designed for a 1 GB RAM / 30 GB Linux VPS and includes Telegram notifications,
 persistent daily state, paper-trading defaults, zero-order shadow execution,
 circuit breakers, and a systemd service.
@@ -131,6 +131,20 @@ The bot submits every spread as one atomic Alpaca multi-leg order and uses a
 `floor-insurance-*` client-order ID for crash reconciliation. It never calls an
 account-wide flatten endpoint.
 
+## SPY paper limit probe
+
+The broker-mechanics experiment scans fresh, tight $1-wide SPY put spreads from
+farthest OTM inward, requires a fixed $0.30 displayed executable credit,
+submits one atomic paper limit at exactly $0.30, and cancels it after 60 seconds
+without repricing. It bypasses the directional filter and writes every broker
+outcome to a separate append-only ledger.
+
+This is deliberately not available on Alpaca's live endpoint. Free indicative
+quotes are not the live OPRA order book, and Alpaca paper fills are simulated;
+the experiment measures paper execution mechanics, not a proven trading edge.
+See [the SPY paper limit probe guide](docs/PAPER_PROBE.md) for the locked setup,
+safety interlocks, commands, and 20-session evaluation rule.
+
 The default `TAKE_PROFIT_FRACTION=none` holds until the spread stop or hard
 close. `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry
 after a stop. You can raise it to three to reproduce the draft circuit breaker,
@@ -180,6 +194,7 @@ Useful commands:
 ```bash
 .venv/bin/floor-insurance state
 .venv/bin/floor-insurance shadow-report
+.venv/bin/floor-insurance probe-report
 .venv/bin/pytest --cov=floor_insurance
 ```
 

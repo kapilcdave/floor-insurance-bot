@@ -73,6 +73,24 @@ class DailyBarsSession(Session):
         )
 
 
+class PartialQuotesSession(Session):
+    def request(self, method, url, **kwargs):
+        self.calls.append((method, url, kwargs))
+        return Response(
+            {
+                "snapshots": {
+                    "present": {
+                        "latestQuote": {
+                            "bp": "0.30",
+                            "ap": "0.35",
+                            "t": "2026-08-19T15:45:00Z",
+                        }
+                    }
+                }
+            }
+        )
+
+
 def test_credit_spread_is_atomic_and_credit_price_is_negative(config):
     session = Session()
     client = AlpacaClient(config, session=session)
@@ -134,3 +152,12 @@ def test_daily_closes_exclude_the_entry_session_even_if_api_returns_it(config):
     assert url.endswith("/v2/stocks/SPY/bars")
     assert kwargs["params"]["timeframe"] == "1Day"
     assert kwargs["params"]["adjustment"] == "all"
+
+
+def test_option_quote_scan_can_ignore_contracts_without_snapshots(config):
+    client = AlpacaClient(config, session=PartialQuotesSession())
+
+    quotes = client.option_quotes(["present", "missing"], allow_missing=True)
+
+    assert list(quotes) == ["present"]
+    assert quotes["present"].bid == Decimal("0.30")
