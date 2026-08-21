@@ -156,7 +156,7 @@ class HistoricalData:
         if set(symbols).issubset(cached):
             return {symbol: cached[symbol] for symbol in symbols}
 
-        start_at = datetime.combine(trading_date, time(9, 45), ET).astimezone(
+        start_at = datetime.combine(trading_date, time(9, 30), ET).astimezone(
             ZoneInfo("UTC")
         )
         end_at = datetime.combine(trading_date, time(15, 1), ET).astimezone(
