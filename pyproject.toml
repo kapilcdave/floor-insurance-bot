@@ -28,6 +28,7 @@ floor-iron-fly-research = "floor_insurance.iron_fly_research:main"
 floor-adaptive-iron-fly-research = "floor_insurance.adaptive_iron_fly_research:main"
 floor-option-flow-research = "floor_insurance.option_flow_research:main"
 floor-adaptive-option-flow-research = "floor_insurance.adaptive_option_flow_research:main"
+floor-delayed-option-flow-research = "floor_insurance.delayed_option_flow_research:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

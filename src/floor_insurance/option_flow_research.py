@@ -42,6 +42,7 @@ class OptionFlowSettings:
     symbol: str = "SPY"
     width: Decimal = Decimal("1")
     signal_start: time = time(9, 30)
+    signal_end: time = time(10, 0)
     entry_time: time = time(10, 0)
     hard_close: time = time(15, 0)
     signal_radius: int = 1
@@ -142,7 +143,7 @@ def option_flow_score(
         call = label.startswith("C_")
         for bar in option_bars.get(symbol, []):
             moment = bar.timestamp.time()
-            if not (settings.signal_start <= moment < settings.entry_time):
+            if not (settings.signal_start <= moment < settings.signal_end):
                 continue
             volume = max(Decimal("0"), bar.volume)
             total += volume
