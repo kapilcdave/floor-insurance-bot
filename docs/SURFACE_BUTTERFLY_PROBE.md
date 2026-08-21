@@ -93,3 +93,15 @@ tail -f state/surface_butterfly_probe_events.jsonl
 The process resets only after a completed prior session. If a prior-day entry
 or exit remains pending/open, it stops and requires manual reconciliation
 instead of assuming the paper position disappeared.
+
+## Initial plumbing check
+
+At 14:29 ET on August 21, 2026, the read-only scanner connected to an active,
+unblocked Alpaca Level 3 paper account and evaluated five centers with complete,
+fresh, tight six-leg quote sets. It selected the 762/763/764 put butterfly at a
+$0.06 executable debit; the matching call butterfly cost $0.22, producing a
+$0.16 gap. The scan submitted no order because it was outside 11:00–11:05 ET,
+and it does not count toward the 20-session forward test.
+
+This plumbing observation demonstrates current contract discovery, quote-side
+math, and candidate ranking. It is not fill evidence or a profitable trade.

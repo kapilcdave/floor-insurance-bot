@@ -161,6 +161,10 @@ def test_scan_outside_window_is_read_only_and_not_forward_evidence(tmp_path):
     assert result.candidate is not None
     assert report["in_entry_window"] is False
     assert report["counts_toward_forward_test"] is False
+    assert report["center_diagnostics"][0]["result"] in {
+        "missing_contract",
+        "passed",
+    }
     assert client.submissions == []
 
 

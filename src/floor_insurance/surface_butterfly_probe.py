@@ -198,6 +198,7 @@ class ScanResult:
     candidate_count: int
     candidate: ButterflyCandidate | None
     reason: str
+    diagnostics: tuple[dict[str, Any], ...] = ()
 
 
 def _nearest_whole(value: Decimal) -> Decimal:
@@ -244,6 +245,7 @@ def select_candidate(
     quotes: dict[str, Quote],
     now: datetime,
     config: SurfaceProbeConfig,
+    diagnostics: list[dict[str, Any]] | None = None,
 ) -> tuple[ButterflyCandidate | None, int]:
     by_kind = {
         "C": {contract.strike: contract for contract in calls},
@@ -259,6 +261,8 @@ def select_candidate(
             for kind, values in by_kind.items()
         }
         if any(value is None for value in triplets.values()):
+            if diagnostics is not None:
+                diagnostics.append({"center": center, "result": "missing_contract"})
             continue
         symbols = {
             kind: tuple(contract.symbol for contract in triplet or ())
@@ -269,6 +273,8 @@ def select_candidate(
             symbol in quotes and _fresh_and_tight(quotes[symbol], now, config)
             for symbol in six
         ):
+            if diagnostics is not None:
+                diagnostics.append({"center": center, "result": "quote_gate"})
             continue
         evaluated += 1
         debit = {
@@ -277,10 +283,32 @@ def select_candidate(
         }
         gap = abs(debit["C"] - debit["P"])
         if gap < config.minimum_parity_gap:
+            if diagnostics is not None:
+                diagnostics.append(
+                    {
+                        "center": center,
+                        "result": "gap_below_minimum",
+                        "call_debit": debit["C"],
+                        "put_debit": debit["P"],
+                        "parity_gap": gap,
+                    }
+                )
             continue
         kind = "C" if debit["C"] <= debit["P"] else "P"
         limit_price = debit[kind].quantize(CENT, rounding=ROUND_CEILING)
         if not config.minimum_signed_limit <= limit_price <= config.maximum_entry_debit:
+            if diagnostics is not None:
+                diagnostics.append(
+                    {
+                        "center": center,
+                        "result": "limit_outside_range",
+                        "kind": kind,
+                        "call_debit": debit["C"],
+                        "put_debit": debit["P"],
+                        "parity_gap": gap,
+                        "limit_price": limit_price,
+                    }
+                )
             continue
         selected_symbols = symbols[kind]
         passed.append(
@@ -296,6 +324,18 @@ def select_candidate(
                 quotes={symbol: quotes[symbol] for symbol in six},
             )
         )
+        if diagnostics is not None:
+            diagnostics.append(
+                {
+                    "center": center,
+                    "result": "passed",
+                    "kind": kind,
+                    "call_debit": debit["C"],
+                    "put_debit": debit["P"],
+                    "parity_gap": gap,
+                    "limit_price": limit_price,
+                }
+            )
     if not passed:
         return None, evaluated
     return (
@@ -324,7 +364,15 @@ def scan_surface(
     spot_age = now.astimezone(timezone.utc) - spot_at.astimezone(timezone.utc)
     in_window = config.entry_time <= now.time() <= config.entry_cutoff
     if not -2 <= spot_age.total_seconds() <= config.maximum_quote_age_seconds:
-        return ScanResult(now, spot, spot_at, in_window, 0, None, "underlying trade is stale")
+        return ScanResult(
+            now,
+            spot,
+            spot_at,
+            in_window,
+            0,
+            None,
+            "underlying trade is stale",
+        )
     calls = client.option_contracts(trading_date, "call")
     puts = client.option_contracts(trading_date, "put")
     by_kind = {
@@ -346,6 +394,7 @@ def scan_surface(
         }
     )
     quotes = client.option_quotes(symbols, allow_missing=True) if symbols else {}
+    diagnostics: list[dict[str, Any]] = []
     candidate, evaluated = select_candidate(
         spot=spot,
         calls=calls,
@@ -353,9 +402,19 @@ def scan_surface(
         quotes=quotes,
         now=now,
         config=config,
+        diagnostics=diagnostics,
     )
     reason = "candidate selected" if candidate else "no candidate passed quote, gap, and debit gates"
-    return ScanResult(now, spot, spot_at, in_window, evaluated, candidate, reason)
+    return ScanResult(
+        now,
+        spot,
+        spot_at,
+        in_window,
+        evaluated,
+        candidate,
+        reason,
+        tuple(diagnostics),
+    )
 
 
 def _entry_legs(symbols: tuple[str, str, str]) -> list[dict[str, str]]:
@@ -755,6 +814,7 @@ def scan_report(result: ScanResult) -> dict[str, Any]:
             "in_entry_window": result.in_entry_window,
             "evaluated_centers": result.candidate_count,
             "reason": result.reason,
+            "center_diagnostics": result.diagnostics,
             "candidate": candidate_details(result.candidate) if result.candidate else None,
             "counts_toward_forward_test": bool(
                 result.in_entry_window and result.candidate is not None
@@ -827,6 +887,7 @@ def main() -> int:
             return 0
         account = client.account()
         if args.command == "doctor":
+            clock = client.clock()
             print(
                 json.dumps(
                     {
@@ -836,6 +897,9 @@ def main() -> int:
                         "trading_blocked": account.get("trading_blocked"),
                         "options_trading_level": account.get("options_trading_level"),
                         "options_buying_power": account.get("options_buying_power"),
+                        "market_open": clock.get("is_open"),
+                        "next_open": clock.get("next_open"),
+                        "next_close": clock.get("next_close"),
                         "options_feed": config.options_feed,
                         "stock_feed": config.stock_feed,
                         "state_path": str(config.state_path),
