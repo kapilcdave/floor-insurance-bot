@@ -159,6 +159,13 @@ back most of the tail premium, leaving too little gross edge to survive
 execution. Its final 60 sessions remain sealed, and it is not connected to the
 order engine. See [the iron-fly research ledger](docs/IRON_FLY_RESEARCH.md).
 
+The preregistered follow-up allowed $2 through $5 wings but selected the widest
+one whose modeled loss stayed below $100. It also failed: -$18.48 per training
+trade and -$14.66 per validation trade. Most entries could afford only $2 or $3
+wings; the broader structures that retain more tail premium generally violate
+the small-account risk cap. See
+[the adaptive-width ledger](docs/ADAPTIVE_IRON_FLY_RESEARCH.md).
+
 The default `TAKE_PROFIT_FRACTION=none` holds until the spread stop or hard
 close. `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry
 after a stop. You can raise it to three to reproduce the draft circuit breaker,

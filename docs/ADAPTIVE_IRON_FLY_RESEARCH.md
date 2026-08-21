@@ -1,6 +1,6 @@
 # Adaptive-width SPY 0DTE iron-fly research
 
-Status: **preregistered; not yet evaluated**.
+Status: **rejected on training and validation; final holdout remains sealed**.
 
 The locked $2-wing iron fly was approximately flat before an optimistic removal
 of friction and deeply negative after four-leg costs. Its narrow wings bought
@@ -56,3 +56,44 @@ As with the first test, conservative modeled fills can reject this structure
 but cannot prove live executability. See
 [the narrow-fly ledger](IRON_FLY_RESEARCH.md) for the mechanism, primary
 research, and full data limitations.
+
+## Result
+
+The locked run rejected the adaptive structure without opening the 60-session
+holdout. The strategy-specific cache audit found no option data from May 26
+through August 19, 2026.
+
+| Split | Trades | Wins | Avg width | Average P&L | Total P&L | Profit factor | Max drawdown |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Training | 155 | 50 | $2.41 | -$18.48 | -$2,865.00 | 0.2914 | -$2,865.00 |
+| Validation | 59 | 26 | $2.78 | -$14.66 | -$864.80 | 0.4716 | -$927.00 |
+| Training stress | 153 | 41 | $2.38 | -$26.13 | -$3,998.60 | 0.1607 | -$3,998.60 |
+| Validation stress | 59 | 22 | $2.66 | -$22.08 | -$1,302.80 | 0.2902 | -$1,323.60 |
+
+The base selector chose $2 wings on 101 training trades, $3 on 47, $4 on four,
+and $5 on three. Validation shifted toward $3 wings (44 of 59 trades), which
+raised the win rate from the narrow fly's 33.9% to 44.1%. It did not produce
+positive expectancy. Losses were larger when the wider structure failed, and
+both chronological splits remained decisively negative.
+
+The $100 cap is binding in the way the hypothesis anticipated: broad wings
+retain more premium, but most $4 and $5 structures require more than $100 of
+defined risk and are rejected. The widths the account can afford still buy
+back too much tail exposure to overcome four-leg friction. Changing the width
+set, risk cap, or richness multiple after this result would be another strategy
+and would require a new preregistration; none is promoted here.
+
+The 10,000-path diagnostic bootstrap estimated zero positive 252-trade years
+for this historical model, with median P&L of -$4,390.40. It is descriptive,
+not a forecast.
+
+## Reproduce the rejected run
+
+```bash
+floor-adaptive-iron-fly-research \
+  --start 2024-02-01 \
+  --end 2026-08-19 \
+  --oos-start 2026-05-26 \
+  --cache-dir state/adaptive-iron-fly-cache \
+  --report-out state/adaptive-iron-fly-report.json
+```
