@@ -14,4 +14,14 @@ state/*.csv
 state/backtest-cache/
 state/atm-trend-cache*/
 state/implied-move-cache/
+state/fifty-credit-cache/
+state/iron-fly-cache/
+state/adaptive-iron-fly-cache/
+state/option-flow-cache/
+state/adaptive-option-flow-cache/
+state/delayed-option-flow-cache/
+state/constituent-lead-cache/
+state/implied-condor-cache/
+state/conformal-condor-cache/
+state/surface-butterfly-cache/
 !state/.gitkeep

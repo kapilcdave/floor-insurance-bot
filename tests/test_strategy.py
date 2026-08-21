@@ -6,10 +6,12 @@ import pytest
 from floor_insurance.models import Contract, Quote
 from floor_insurance.strategy import (
     StrategySkip,
+    credit_target_candidates,
     executable_close_debit,
     executable_credit,
     max_loss_per_contract,
     select_atm_spread,
+    select_credit_target_spread,
     select_spread,
     size_contracts,
     size_contracts_for_budget,
@@ -52,6 +54,54 @@ def test_atm_selection_requires_its_exact_protective_leg():
             [contract("550"), contract("548")],
             Decimal("550.80"),
             Decimal("1"),
+        )
+
+
+def test_credit_target_selects_farthest_tight_candidate_meeting_target():
+    contracts = [contract(str(strike)) for strike in range(546, 551)]
+    candidates = credit_target_candidates(
+        contracts,
+        Decimal("550"),
+        Decimal("1"),
+        Decimal("3"),
+    )
+    quotes = {
+        "SPY-P-546": quote("0.03", "0.05"),
+        "SPY-P-547": quote("0.25", "0.27"),
+        "SPY-P-548": quote("0.58", "0.60"),
+        "SPY-P-549": quote("0.80", "0.82"),
+        "SPY-P-550": quote("1.10", "1.12"),
+    }
+
+    short, long, credit = select_credit_target_spread(
+        candidates,
+        quotes,
+        Decimal("0.30"),
+        Decimal("0.10"),
+    )
+
+    assert short.strike == Decimal("548")
+    assert long.strike == Decimal("547")
+    assert credit == Decimal("0.31")
+
+
+def test_credit_target_rejects_wide_leg_quotes():
+    candidates = credit_target_candidates(
+        [contract("549"), contract("550")],
+        Decimal("550"),
+        Decimal("1"),
+        Decimal("1"),
+    )
+    quotes = {
+        "SPY-P-549": quote("0.05", "0.25"),
+        "SPY-P-550": quote("0.60", "0.65"),
+    }
+    with pytest.raises(StrategySkip, match="fresh, tight"):
+        select_credit_target_spread(
+            candidates,
+            quotes,
+            Decimal("0.30"),
+            Decimal("0.10"),
         )
 
 

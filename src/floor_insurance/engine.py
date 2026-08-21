@@ -9,15 +9,18 @@ from .alpaca import AlpacaClient, AlpacaError
 from .config import Config
 from .models import DailyState, Phase
 from .notify import Notifier
+from .probe import PaperProbeJournal
 from .shadow import ShadowJournal
 from .state import StateStore
 from .strategy import (
     CENT,
     StrategySkip,
+    credit_target_candidates,
     executable_close_debit,
     executable_credit,
     max_loss_per_contract,
     select_atm_spread,
+    select_credit_target_spread,
     select_spread,
     size_contracts_for_budget,
     stop_close_debit,
@@ -47,12 +50,16 @@ class TradingEngine:
         store: StateStore,
         notifier: Notifier,
         shadow_journal: ShadowJournal | None = None,
+        probe_journal: PaperProbeJournal | None = None,
     ):
         self.config = config
         self.alpaca = alpaca
         self.store = store
         self.notifier = notifier
         self.shadow_journal = shadow_journal or ShadowJournal(config.shadow_log_path)
+        self.probe_journal = probe_journal or PaperProbeJournal(
+            config.paper_probe_log_path
+        )
         self.tz = ZoneInfo(config.timezone)
         self._calendar_cache: dict[str, dict | None] = {}
 
@@ -115,6 +122,18 @@ class TradingEngine:
         )
 
     def _enter(self, state: DailyState, now: datetime) -> None:
+        if self.config.paper_probe_mode:
+            state.event(
+                "paper probe trend bypassed",
+                now,
+                reason="execution probe is intentionally non-directional",
+            )
+        elif not self._trend_allows_entry(state, now):
+            return
+
+        self._enter_after_trend(state, now)
+
+    def _trend_allows_entry(self, state: DailyState, now: datetime) -> bool:
         mode = TrendMode(self.config.trend_mode)
         observations = self.config.trend_window + (
             1 if mode == TrendMode.CROSSOVER else 0
@@ -132,7 +151,7 @@ class TradingEngine:
             )
         except ValueError as exc:
             self._finish(state, now, f"trend signal unavailable: {exc}")
-            return
+            return False
         state.event(
             "trend signal evaluated",
             now,
@@ -156,8 +175,10 @@ class TradingEngine:
                 now,
                 f"{self.config.signal_symbol} trend signal is not eligible",
             )
-            return
+            return False
+        return True
 
+    def _enter_after_trend(self, state: DailyState, now: datetime) -> None:
         account = self.alpaca.account()
         if account.get("trading_blocked") and not self.config.shadow_mode:
             self._finish(state, now, "Alpaca account is trading-blocked")
@@ -170,7 +191,33 @@ class TradingEngine:
         price, trade_at = self.alpaca.latest_underlying_trade(now.date().isoformat())
         self._require_fresh(trade_at, now, f"{self.config.symbol} reference")
         contracts = self.alpaca.put_contracts(now.date().isoformat())
-        if self.config.strike_selection == "atm":
+        if self.config.strike_selection == "credit_target":
+            candidates = credit_target_candidates(
+                contracts,
+                price,
+                self.config.spread_width,
+                self.config.probe_max_otm_dollars,
+            )
+            if not candidates:
+                raise StrategySkip("no exact-width credit-target candidates are available")
+            symbols = sorted(
+                {contract.symbol for pair in candidates for contract in pair}
+            )
+            all_quotes = self.alpaca.option_quotes(symbols, allow_missing=True)
+            quotes = {}
+            for symbol, quote in all_quotes.items():
+                try:
+                    self._require_fresh(quote.timestamp, now, f"{symbol} option quote")
+                except StrategySkip:
+                    continue
+                quotes[symbol] = quote
+            short, long, credit = select_credit_target_spread(
+                candidates,
+                quotes,
+                self.config.min_credit,
+                self.config.max_leg_quote_width,
+            )
+        elif self.config.strike_selection == "atm":
             short, long = select_atm_spread(
                 contracts, price, self.config.spread_width
             )
@@ -179,10 +226,11 @@ class TradingEngine:
                 contracts, price, self.config.buffer_dollars, self.config.spread_width
             )
         spread_width = short.strike - long.strike
-        quotes = self.alpaca.option_quotes([short.symbol, long.symbol])
-        self._require_fresh(quotes[short.symbol].timestamp, now, "short option quote")
-        self._require_fresh(quotes[long.symbol].timestamp, now, "long option quote")
-        credit = executable_credit(quotes[short.symbol], quotes[long.symbol])
+        if self.config.strike_selection != "credit_target":
+            quotes = self.alpaca.option_quotes([short.symbol, long.symbol])
+            self._require_fresh(quotes[short.symbol].timestamp, now, "short option quote")
+            self._require_fresh(quotes[long.symbol].timestamp, now, "long option quote")
+            credit = executable_credit(quotes[short.symbol], quotes[long.symbol])
         min_credit = (
             self.config.shadow_min_credit
             if self.config.shadow_mode
@@ -196,7 +244,8 @@ class TradingEngine:
                 f"executable credit ${credit:.2f} is below "
                 f"{threshold_name} ${min_credit:.2f}"
             )
-        per_contract_risk = max_loss_per_contract(spread_width, credit)
+        entry_limit = self.config.min_credit if self.config.paper_probe_mode else credit
+        per_contract_risk = max_loss_per_contract(spread_width, entry_limit)
         if per_contract_risk > self.config.max_total_loss_dollars:
             raise StrategySkip(
                 f"one spread risks ${per_contract_risk:.2f}, above "
@@ -215,7 +264,7 @@ class TradingEngine:
             quantity = size_contracts_for_budget(
                 risk_budget,
                 spread_width,
-                credit,
+                entry_limit,
                 self.config.max_contracts,
             )
         else:
@@ -227,7 +276,7 @@ class TradingEngine:
             quantity = size_contracts_for_budget(
                 risk_budget,
                 spread_width,
-                credit,
+                entry_limit,
                 self.config.max_contracts,
             )
 
@@ -236,7 +285,11 @@ class TradingEngine:
         state.short_strike = str(short.strike)
         state.long_strike = str(long.strike)
         state.quantity = quantity
-        state.entry_credit = str(credit)
+        state.entry_credit = str(entry_limit)
+        state.entry_limit_credit = str(entry_limit)
+        state.entry_submitted_at = None
+        state.entry_cancel_requested_at = None
+        state.entry_underlying = str(price)
         state.entry_submissions += 1
         state.event(
             "entry prepared",
@@ -245,7 +298,8 @@ class TradingEngine:
             short=str(short.strike),
             long=str(long.strike),
             width=str(spread_width),
-            credit=str(credit),
+            observed_credit=str(credit),
+            limit_credit=str(entry_limit),
             quantity=quantity,
         )
 
@@ -302,27 +356,61 @@ class TradingEngine:
 
         client_id = f"floor-insurance-{state.trading_date}-entry-{state.entry_submissions}"
         state.active_client_order_id = client_id
+        state.entry_submitted_at = now.isoformat()
         state.phase = Phase.ENTRY_PENDING
         self.store.save(state)
         try:
             order = self._submit_or_reconcile(
                 state,
                 opening=True,
-                price=credit,
+                price=entry_limit,
                 client_id=client_id,
             )
         except SubmissionRejected as exc:
+            self._probe_event(
+                "probe_rejected",
+                now,
+                trading_date=state.trading_date,
+                client_order_id=client_id,
+                message=str(exc),
+            )
             self._clear_trade(state)
             self._finish(state, now, f"entry rejected: {exc}")
             self.notifier.send(f"Entry rejected by Alpaca: {exc}")
             return
         if order:
             state.active_order_id = order["id"]
-            state.event("entry submitted", now, order_id=order["id"])
+            state.event(
+                "entry submitted",
+                now,
+                order_id=order["id"],
+                observed_credit=str(credit),
+                limit_credit=str(entry_limit),
+            )
+            self._probe_event(
+                "probe_submitted",
+                now,
+                trading_date=state.trading_date,
+                order_id=order["id"],
+                client_order_id=client_id,
+                feed=self.config.options_feed,
+                underlying=price,
+                short_symbol=short.symbol,
+                short_strike=short.strike,
+                short_bid=quotes[short.symbol].bid,
+                short_ask=quotes[short.symbol].ask,
+                long_symbol=long.symbol,
+                long_strike=long.strike,
+                long_bid=quotes[long.symbol].bid,
+                long_ask=quotes[long.symbol].ask,
+                observed_credit=credit,
+                limit_credit=entry_limit,
+                quantity=quantity,
+            )
             self.notifier.send(
                 f"Entry submitted: {quantity}x {self.config.symbol} "
                 f"{short.strike}/{long.strike} put "
-                f"spread, limit ${credit} credit."
+                f"spread, limit ${entry_limit} credit."
             )
 
     def _submit_or_reconcile(
@@ -369,10 +457,21 @@ class TradingEngine:
             if state.phase == Phase.ENTRY_PENDING:
                 filled_price = abs(Decimal(str(order.get("filled_avg_price") or state.entry_credit)))
                 state.entry_credit = str(filled_price)
+                state.entry_filled_at = now.isoformat()
                 state.phase = Phase.OPEN
                 state.active_order_id = None
                 state.active_client_order_id = None
                 state.event("entry filled", now, credit=str(filled_price), quantity=state.quantity)
+                self._probe_event(
+                    "probe_filled",
+                    now,
+                    trading_date=state.trading_date,
+                    order_id=order["id"],
+                    filled_credit=filled_price,
+                    quantity=state.quantity,
+                    seconds_to_fill=self._entry_wait_seconds(state, now),
+                    cancel_was_requested=bool(state.entry_cancel_requested_at),
+                )
                 self.notifier.send(
                     f"Entry filled: {state.quantity}x {state.short_strike}/{state.long_strike} "
                     f"for ${filled_price} credit."
@@ -383,6 +482,18 @@ class TradingEngine:
 
         if status in TERMINAL_FAILURES:
             if state.phase == Phase.ENTRY_PENDING:
+                if self.config.paper_probe_mode:
+                    self._probe_event(
+                        "probe_unfilled",
+                        now,
+                        trading_date=state.trading_date,
+                        order_id=order["id"],
+                        status=status,
+                        seconds_working=self._entry_wait_seconds(state, now),
+                    )
+                    self._clear_trade(state)
+                    self._finish(state, now, f"paper probe entry {status} unfilled")
+                    return
                 self._clear_trade(state)
                 state.phase = Phase.IDLE
                 state.event(f"entry {status}", now)
@@ -393,6 +504,31 @@ class TradingEngine:
                 state.event(f"exit {status}; position remains open", now)
                 self.notifier.send(f"Exit order {status}; position remains open.")
             return
+
+        if self.config.paper_probe_mode and state.phase == Phase.ENTRY_PENDING:
+            elapsed = self._entry_wait_seconds(state, now)
+            if (
+                elapsed is not None
+                and elapsed >= self.config.entry_fill_timeout_seconds
+            ):
+                if state.entry_cancel_requested_at is None:
+                    self.alpaca.cancel_order(order["id"])
+                    state.entry_cancel_requested_at = now.isoformat()
+                    state.event(
+                        "paper probe cancel requested",
+                        now,
+                        order_id=order["id"],
+                        seconds_working=elapsed,
+                    )
+                    self._probe_event(
+                        "probe_cancel_requested",
+                        now,
+                        trading_date=state.trading_date,
+                        order_id=order["id"],
+                        seconds_working=elapsed,
+                    )
+                    self._manage_pending(state, now, hard_close)
+                return
 
         if now.time() >= hard_close:
             self.alpaca.cancel_order(order["id"])
@@ -602,6 +738,21 @@ class TradingEngine:
     def _complete_exit(self, state: DailyState, now: datetime, order: dict) -> None:
         reason = state.exit_reason or "unknown"
         price = abs(Decimal(str(order.get("filled_avg_price") or "0")))
+        entry_credit = Decimal(state.entry_credit or "0")
+        gross_pnl = (
+            (entry_credit - price) * Decimal("100") * state.quantity
+        ).quantize(CENT)
+        self._probe_event(
+            "probe_exit_filled",
+            now,
+            trading_date=state.trading_date,
+            order_id=order["id"],
+            reason=reason,
+            entry_credit=entry_credit,
+            exit_debit=price,
+            quantity=state.quantity,
+            gross_pnl=gross_pnl,
+        )
         state.event("exit filled", now, reason=reason, debit=str(price))
         if reason == "emergency_stop":
             state.losses += 1
@@ -635,6 +786,30 @@ class TradingEngine:
                 )
             raise StrategySkip(f"{label} is stale ({age_seconds:.0f}s old)")
 
+    def _entry_wait_seconds(
+        self, state: DailyState, now: datetime
+    ) -> float | None:
+        if not state.entry_submitted_at:
+            return None
+        try:
+            submitted = datetime.fromisoformat(state.entry_submitted_at)
+        except ValueError:
+            LOG.error("invalid entry_submitted_at in state: %s", state.entry_submitted_at)
+            return None
+        if submitted.tzinfo is None:
+            submitted = submitted.replace(tzinfo=self.tz)
+        return max(0.0, (now - submitted.astimezone(now.tzinfo)).total_seconds())
+
+    def _probe_event(
+        self, event: str, observed_at: datetime, **details: object
+    ) -> None:
+        if not self.config.paper_probe_mode:
+            return
+        try:
+            self.probe_journal.write(event, observed_at, **details)
+        except OSError:
+            LOG.exception("could not append %s to paper probe journal", event)
+
     def _clear_trade(self, state: DailyState) -> None:
         state.short_symbol = None
         state.long_symbol = None
@@ -642,6 +817,9 @@ class TradingEngine:
         state.long_strike = None
         state.quantity = 0
         state.entry_credit = None
+        state.entry_limit_credit = None
+        state.entry_submitted_at = None
+        state.entry_cancel_requested_at = None
         state.active_order_id = None
         state.active_client_order_id = None
         state.exit_reason = None

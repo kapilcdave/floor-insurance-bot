@@ -1,9 +1,9 @@
 # Floor Insurance Bot
 
-A small, auditable 0DTE credit-spread research bot for Alpaca. The active local
-setup observes an IWM ATM bull-put spread after a completed-close 20-day SMA
-crossover in zero-order shadow mode. SPY, QQQ, and paper-only XSP remain
-supported. It is
+A small, auditable 0DTE credit-spread research bot for Alpaca. It includes an
+IWM zero-order shadow experiment and a strictly paper-only SPY limit probe that
+tests unchanged atomic order fills against Alpaca's simulator. SPY, QQQ, IWM,
+and paper-only XSP remain supported by the broader research engine. It is
 designed for a 1 GB RAM / 30 GB Linux VPS and includes Telegram notifications,
 persistent daily state, paper-trading defaults, zero-order shadow execution,
 circuit breakers, and a systemd service.
@@ -131,6 +131,100 @@ The bot submits every spread as one atomic Alpaca multi-leg order and uses a
 `floor-insurance-*` client-order ID for crash reconciliation. It never calls an
 account-wide flatten endpoint.
 
+## SPY paper limit probe
+
+The broker-mechanics experiment scans fresh, tight $1-wide SPY put spreads from
+farthest OTM inward, requires a fixed $0.30 displayed executable credit,
+submits one atomic paper limit at exactly $0.30, and cancels it after 60 seconds
+without repricing. It bypasses the directional filter and writes every broker
+outcome to a separate append-only ledger.
+
+This is deliberately not available on Alpaca's live endpoint. Free indicative
+quotes are not the live OPRA order book, and Alpaca paper fills are simulated;
+the experiment measures paper execution mechanics, not a proven trading edge.
+See [the SPY paper limit probe guide](docs/PAPER_PROBE.md) for the locked setup,
+safety interlocks, commands, and 20-session evaluation rule.
+
+The separately preregistered `$0.50` version has already failed its historical
+rejection screen. It traded only five of 433 training sessions, lost $109.50,
+and produced zero trades across 145 validation sessions. Four of the five
+training entries hit the spread stop. Its final 60-session holdout remains
+sealed because the development result misses every promotion gate. See
+[the fixed-credit research ledger](docs/FIFTY_CREDIT_RESEARCH.md).
+
+A direction-neutral variance-premium test also failed. The locked $2-wing SPY
+iron fly produced 155 training and 59 validation trades, but averaged -$16.63
+and -$13.98 per trade after conservative four-leg costs. The narrow wings buy
+back most of the tail premium, leaving too little gross edge to survive
+execution. Its final 60 sessions remain sealed, and it is not connected to the
+order engine. See [the iron-fly research ledger](docs/IRON_FLY_RESEARCH.md).
+
+The preregistered follow-up allowed $2 through $5 wings but selected the widest
+one whose modeled loss stayed below $100. It also failed: -$18.48 per training
+trade and -$14.66 per validation trade. Most entries could afford only $2 or $3
+wings; the broader structures that retain more tail premium generally violate
+the small-account risk cap. See
+[the adaptive-width ledger](docs/ADAPTIVE_IRON_FLY_RESEARCH.md).
+
+An opening option-flow signal was balanced across bullish and bearish entries
+and reached 122 training and 53 validation trades. Its $1 credit spreads still
+lost -$4.03 and -$5.04 per trade after two-leg costs. An optimistic removal of
+all modeled friction leaves only a few dollars per trade, suggesting a small
+gross signal that the narrow structure cannot monetize rather than deployable
+alpha. See [the option-flow ledger](docs/OPTION_FLOW_RESEARCH.md).
+
+Allowing $2 and $3 option-flow spreads did not change a single trade: every
+wider candidate exceeded the locked $100 maximum-loss cap, so all 175
+development entries remained $1 wide. The cap is doing its job, but it prevents
+scaling the possible gross signal. See
+[the adaptive option-flow ledger](docs/ADAPTIVE_OPTION_FLOW_RESEARCH.md).
+
+The deployment-compatible flow test waited until 10:15 because free Alpaca
+option trades are delayed. The information decayed: training fell to a 49.2%
+win rate and -$8.47 per trade; validation averaged -$4.57. Even an optimistic
+removal of all modeled friction leaves training slightly negative. See
+[the delayed-flow ledger](docs/DELAYED_OPTION_FLOW_RESEARCH.md).
+
+A stock-only constituent lead-lag gate was also attempted before pricing any
+options. Requiring exact five-minute endpoint bars for all 12 names yielded
+zero training signals because the free IEX feed is too sparse as a complete
+cross-section. Its cache stops before the final holdout. See
+[the constituent lead ledger](docs/CONSTITUENT_LEAD_RESEARCH.md).
+
+A preregistered sparse-IEX fallback required 8 of 12 members with coverage near
+both window endpoints. It generated 105 training and 44 validation signals but
+failed the stock-only gate: -0.48 net basis points per training signal and
+-5.18 in validation, with validation profit factor 0.4003. No options were
+tested around it. See
+[the sparse constituent ledger](docs/SPARSE_CONSTITUENT_LEAD_RESEARCH.md).
+
+A direction-neutral implied-move iron condor also failed. It entered only when
+the 11:00 ATM straddle was at least 1.25 times trailing realized movement, then
+sold $1-wide wings at plus/minus 0.75 of that implied move. The sample was
+large enough to decide: 173 training and 62 validation trades averaged -$8.11
+and -$10.22 after base costs, with profit factors near 0.42. Even removing every
+modeled fill cost and fee leaves validation negative. See
+[the implied-condor ledger](docs/IMPLIED_CONDOR_RESEARCH.md).
+
+An online ridge/HAR-style volatility model with rolling conformal calibration
+then replaced fixed strike distances. Its nominal 90% range was honestly
+calibrated at 93.9% in training and 94.5% in validation, but averaged $8 to $9
+wide. Options outside that range rarely paid ten cents: only 11 training and
+five validation trades survived, averaging -$12.75 and -$16.80. Advanced
+forecast calibration did not create a monetizable option-pricing edge. See
+[the conformal-condor ledger](docs/CONFORMAL_CONDOR_RESEARCH.md).
+
+The first strategy to pass its locked development gate is a local surface
+relative-value butterfly. It compares identically struck call and put
+butterflies, buys the cheaper one for at most $0.10, and exits one hour later.
+Training produced 291 trades averaging +$4.10 with profit factor 4.01;
+validation produced 106 averaging +$2.92 with profit factor 2.85. It remained
+positive at the preregistered one-cent-per-contract-unit stress. However,
+validation falls to only +$0.27 at two cents and turns negative at three cents.
+Because historical one-minute prints are not synchronized executable quotes,
+this is a paper-probe candidate—not established live alpha. See
+[the surface-butterfly ledger](docs/SURFACE_BUTTERFLY_RESEARCH.md).
+
 The default `TAKE_PROFIT_FRACTION=none` holds until the spread stop or hard
 close. `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry
 after a stop. You can raise it to three to reproduce the draft circuit breaker,
@@ -180,6 +274,7 @@ Useful commands:
 ```bash
 .venv/bin/floor-insurance state
 .venv/bin/floor-insurance shadow-report
+.venv/bin/floor-insurance probe-report
 .venv/bin/pytest --cov=floor_insurance
 ```
 

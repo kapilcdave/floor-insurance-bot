@@ -53,6 +53,60 @@ def select_atm_spread(
     )
 
 
+def credit_target_candidates(
+    contracts: list[Contract],
+    underlying_price: Decimal,
+    width: Decimal,
+    max_otm_dollars: Decimal,
+) -> list[tuple[Contract, Contract]]:
+    """Return exact-width put spreads ordered from farthest OTM inward."""
+
+    by_strike = {contract.strike: contract for contract in contracts}
+    lowest_short = underlying_price - max_otm_dollars
+    short_strikes = sorted(
+        strike
+        for strike in by_strike
+        if lowest_short <= strike <= underlying_price and strike - width in by_strike
+    )
+    return [
+        (by_strike[short_strike], by_strike[short_strike - width])
+        for short_strike in short_strikes
+    ]
+
+
+def select_credit_target_spread(
+    candidates: list[tuple[Contract, Contract]],
+    quotes: dict[str, Quote],
+    min_credit: Decimal,
+    max_leg_quote_width: Decimal,
+) -> tuple[Contract, Contract, Decimal]:
+    """Pick the farthest OTM candidate with a fresh-filtered executable credit."""
+
+    for short, long in candidates:
+        short_quote = quotes.get(short.symbol)
+        long_quote = quotes.get(long.symbol)
+        if short_quote is None or long_quote is None:
+            continue
+        if (
+            short_quote.bid < 0
+            or long_quote.bid < 0
+            or short_quote.ask < short_quote.bid
+            or long_quote.ask < long_quote.bid
+        ):
+            continue
+        if (
+            short_quote.ask - short_quote.bid > max_leg_quote_width
+            or long_quote.ask - long_quote.bid > max_leg_quote_width
+        ):
+            continue
+        credit = executable_credit(short_quote, long_quote)
+        if min_credit <= credit < short.strike - long.strike:
+            return short, long, credit
+    raise StrategySkip(
+        f"no fresh, tight credit-target spread shows at least ${min_credit:.2f}"
+    )
+
+
 def executable_credit(short_quote: Quote, long_quote: Quote) -> Decimal:
     value = short_quote.bid - long_quote.ask
     return max(Decimal("0"), value.quantize(CENT, rounding=ROUND_FLOOR))

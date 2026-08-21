@@ -41,6 +41,9 @@ class DailyState:
     long_strike: str | None = None
     quantity: int = 0
     entry_credit: str | None = None
+    entry_limit_credit: str | None = None
+    entry_submitted_at: str | None = None
+    entry_cancel_requested_at: str | None = None
     active_order_id: str | None = None
     active_client_order_id: str | None = None
     exit_reason: str | None = None

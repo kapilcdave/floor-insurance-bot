@@ -23,6 +23,17 @@ floor-directional-experiments = "floor_insurance.directional_experiments:main"
 floor-credit-structure = "floor_insurance.credit_experiments:main"
 floor-atm-trend-research = "floor_insurance.atm_trend_research:main"
 floor-implied-move-research = "floor_insurance.implied_move_research:main"
+floor-fifty-credit-research = "floor_insurance.fifty_credit_research:main"
+floor-iron-fly-research = "floor_insurance.iron_fly_research:main"
+floor-adaptive-iron-fly-research = "floor_insurance.adaptive_iron_fly_research:main"
+floor-option-flow-research = "floor_insurance.option_flow_research:main"
+floor-adaptive-option-flow-research = "floor_insurance.adaptive_option_flow_research:main"
+floor-delayed-option-flow-research = "floor_insurance.delayed_option_flow_research:main"
+floor-constituent-lead-research = "floor_insurance.constituent_lead_research:main"
+floor-sparse-constituent-lead-research = "floor_insurance.sparse_constituent_lead_research:main"
+floor-implied-condor-research = "floor_insurance.implied_condor_research:main"
+floor-conformal-condor-research = "floor_insurance.conformal_condor_research:main"
+floor-surface-butterfly-research = "floor_insurance.surface_butterfly_research:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

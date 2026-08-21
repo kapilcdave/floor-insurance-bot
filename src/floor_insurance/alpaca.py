@@ -247,7 +247,9 @@ class AlpacaClient:
                 return contracts
             params["page_token"] = token
 
-    def option_quotes(self, symbols: list[str]) -> dict[str, Quote]:
+    def option_quotes(
+        self, symbols: list[str], *, allow_missing: bool = False
+    ) -> dict[str, Quote]:
         data = self._request(
             "GET",
             self.config.data_base_url,
@@ -259,6 +261,8 @@ class AlpacaClient:
         for symbol in symbols:
             latest = snapshots.get(symbol, {}).get("latestQuote")
             if not latest:
+                if allow_missing:
+                    continue
                 raise AlpacaError(f"no option quote returned for {symbol}")
             quotes[symbol] = Quote(
                 bid=Decimal(str(latest["bp"])),
