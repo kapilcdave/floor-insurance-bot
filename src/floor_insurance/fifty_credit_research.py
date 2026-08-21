@@ -210,7 +210,10 @@ def simulate_fifty_credit(
         expected = timestamp + timedelta(minutes=settings.stop_delay_bars)
         if settings.stop_delay_bars and exit_at != expected:
             return settle("spread_stop_stale_delayed_mark", settings.width)
-        return settle("spread_stop", max(settings.stop_debit, exit_adverse))
+        return settle(
+            "spread_stop",
+            max(settings.stop_debit, adverse_debit, exit_adverse),
+        )
 
     hard_close_observation = next(
         (item for item in observations if item[0].time() == settings.hard_close),
@@ -460,7 +463,15 @@ def main() -> int:
             if (args.cache_dir / f"options-{value}.json").exists()
         ],
         "metrics": metrics,
-        "bootstrap": moving_block_bootstrap(combined_pnls),
+        "bootstrap": (
+            moving_block_bootstrap(combined_pnls)
+            if len(combined_pnls) >= 30
+            else {
+                "paths": 0,
+                "reason": "fewer than 30 trades; bootstrap would be misleading",
+                "observed_trades": len(combined_pnls),
+            }
+        ),
     }
     encoded = json.dumps(report, indent=2) + "\n"
     if args.report_out:

@@ -152,6 +152,30 @@ def test_stress_stop_waits_one_exact_synchronized_minute():
     assert result.pnl == Decimal("-26.10")
 
 
+def test_delayed_stop_never_improves_on_the_trigger_minute():
+    settings = config(adverse_fill_per_leg=Decimal("0.03"), stop_delay_bars=1)
+    result = simulate_fifty_credit(
+        DAY.isoformat(),
+        underlying(),
+        options(
+            "98",
+            [
+                bar(0, "0.90"),
+                bar(10, "0.80", high="1.10"),
+                bar(11, "0.70"),
+            ],
+            [
+                bar(0, "0.20"),
+                bar(10, "0.20", low="0.10"),
+                bar(11, "0.20"),
+            ],
+        ),
+        settings,
+    )
+    assert result.reason == "spread_stop"
+    assert result.exit_debit == Decimal("1.00")
+
+
 def test_missing_hard_close_data_is_charged_as_full_loss():
     result = simulate_fifty_credit(
         DAY.isoformat(),
