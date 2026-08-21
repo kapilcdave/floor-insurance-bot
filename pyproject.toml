@@ -24,6 +24,7 @@ floor-credit-structure = "floor_insurance.credit_experiments:main"
 floor-atm-trend-research = "floor_insurance.atm_trend_research:main"
 floor-implied-move-research = "floor_insurance.implied_move_research:main"
 floor-fifty-credit-research = "floor_insurance.fifty_credit_research:main"
+floor-iron-fly-research = "floor_insurance.iron_fly_research:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
