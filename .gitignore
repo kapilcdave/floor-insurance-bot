@@ -16,4 +16,5 @@ state/atm-trend-cache*/
 state/implied-move-cache/
 state/fifty-credit-cache/
 state/iron-fly-cache/
+state/adaptive-iron-fly-cache/
 !state/.gitkeep

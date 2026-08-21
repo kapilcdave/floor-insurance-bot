@@ -68,6 +68,7 @@ class IronFlyResult:
     maximum_risk: Decimal = Decimal("0")
     exit_debit: Decimal = Decimal("0")
     pnl: Decimal = Decimal("0")
+    wing_width: Decimal = Decimal("0")
 
 
 def _at(bars: list[PriceBar], moment: time) -> PriceBar | None:
@@ -275,6 +276,7 @@ def simulate_iron_fly(
         maximum_risk,
         exit_debit,
         pnl,
+        settings.wing_width,
     )
 
 
