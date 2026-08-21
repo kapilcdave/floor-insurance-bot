@@ -1,6 +1,6 @@
 # Implied-move SPY 0DTE iron-condor research
 
-Status: **preregistered; results not yet evaluated**.
+Status: **rejected on training and validation; final holdout remains sealed**.
 
 This experiment tests a direction-neutral volatility-risk-premium hypothesis:
 when the same-day ATM straddle prices substantially more movement than SPY has
@@ -87,3 +87,48 @@ forward testing against actual fills.
 - <https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4484011>
 - <https://docs.alpaca.markets/us/docs/historical-option-data>
 
+## Result
+
+The locked experiment failed every economic promotion gate. It evaluated 433
+training and 145 validation sessions while leaving all 60 sessions from May 26
+through August 19, 2026 sealed. The strategy-specific audit found no option
+cache file in that holdout.
+
+| Split | Trades | Wins | Average credit | Average P&L | Total P&L | Profit factor | Max drawdown |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Training | 173 | 88 | $0.29 | -$8.11 | -$1,403.60 | 0.4142 | -$1,403.60 |
+| Validation | 62 | 32 | $0.33 | -$10.22 | -$633.40 | 0.4263 | -$668.60 |
+| Training stress | 158 | 55 | $0.27 | -$16.06 | -$2,537.60 | 0.1347 | -$2,537.60 |
+| Validation stress | 62 | 23 | $0.29 | -$17.96 | -$1,113.40 | 0.1764 | -$1,129.20 |
+
+The sample-size gates were satisfied, so this is not a sparse-result problem.
+The base condor won only 50.9% of training trades and 51.6% of validation
+trades while its average one-contract defined risk was $70.79 and $67.18. The
+OTM short strikes improved the win rate relative to the rejected ATM iron fly,
+but not enough to compensate for the losing tail.
+
+Base friction is $8.20 per round trip: one cent on each of four legs at entry
+and exit, plus $0.20 fees. Adding all of it back is an intentionally optimistic
+friction-free upper bound. Training would average approximately +$0.09, while
+validation would still average -$2.02. Thus execution consumes a nearly flat
+training payoff, but it does not explain the negative validation payoff. At two
+cents per leg both splits deteriorate sharply.
+
+The deterministic 10,000-path moving-block bootstrap estimated zero probability
+of a positive 252-trade year under this historical model. Median annual P&L was
+-$2,174.40. This is descriptive of the rejected specification, not a forecast.
+
+No parameter is reversed or retuned after seeing the result. The condor is not
+connected to paper or live order submission, and the live fill probe is not
+authorized by this result.
+
+## Reproduce the rejected run
+
+```bash
+floor-implied-condor-research \
+  --start 2024-02-01 \
+  --end 2026-08-19 \
+  --oos-start 2026-05-26 \
+  --cache-dir state/implied-condor-cache \
+  --report-out state/implied-condor-report.json
+```

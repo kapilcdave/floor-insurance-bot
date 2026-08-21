@@ -198,6 +198,14 @@ failed the stock-only gate: -0.48 net basis points per training signal and
 tested around it. See
 [the sparse constituent ledger](docs/SPARSE_CONSTITUENT_LEAD_RESEARCH.md).
 
+A direction-neutral implied-move iron condor also failed. It entered only when
+the 11:00 ATM straddle was at least 1.25 times trailing realized movement, then
+sold $1-wide wings at plus/minus 0.75 of that implied move. The sample was
+large enough to decide: 173 training and 62 validation trades averaged -$8.11
+and -$10.22 after base costs, with profit factors near 0.42. Even removing every
+modeled fill cost and fee leaves validation negative. See
+[the implied-condor ledger](docs/IMPLIED_CONDOR_RESEARCH.md).
+
 The default `TAKE_PROFIT_FRACTION=none` holds until the spread stop or hard
 close. `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry
 after a stop. You can raise it to three to reproduce the draft circuit breaker,
