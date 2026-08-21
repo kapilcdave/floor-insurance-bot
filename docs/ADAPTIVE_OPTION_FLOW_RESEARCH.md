@@ -1,6 +1,6 @@
 # Adaptive-width SPY 0DTE option-flow credit-spread research
 
-Status: **preregistered; not yet evaluated**.
+Status: **rejected structurally; final holdout remains sealed**.
 
 The locked $1 opening-flow spread showed a consistent but economically small
 friction-free upper bound in training and validation, then lost after fixed
@@ -53,3 +53,32 @@ live pilot.
 
 See [the original option-flow ledger](OPTION_FLOW_RESEARCH.md) for the signal
 definition, sources, and free-data limitation.
+
+## Result
+
+The remedy could not activate. Across all 122 training and 53 validation
+entries, neither the $2 nor $3 candidate ever passed the locked $100 maximum-
+loss gate. Base and stress therefore selected $1 on every trade and reproduced
+the original result exactly: -$4.03 per training trade and -$5.04 per
+validation trade in base, with still worse stress performance.
+
+This is a structural rejection rather than a new signal failure. An ATM-ish
+$2 credit spread would need at least about $1.01 net credit to keep defined
+risk plus fees within $100. None of the qualifying entries supplied it after
+the locked adverse fill. Widening the hedge cannot scale the possible gross
+edge without also exceeding the proposed pilot loss.
+
+No option data from the final May 26 through August 19 holdout was fetched. The
+strategy is not promoted and the risk cap is not raised after observing this
+result.
+
+## Reproduce the rejected run
+
+```bash
+floor-adaptive-option-flow-research \
+  --start 2024-02-01 \
+  --end 2026-08-19 \
+  --oos-start 2026-05-26 \
+  --cache-dir state/adaptive-option-flow-cache \
+  --report-out state/adaptive-option-flow-report.json
+```

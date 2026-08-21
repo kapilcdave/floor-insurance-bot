@@ -173,6 +173,12 @@ all modeled friction leaves only a few dollars per trade, suggesting a small
 gross signal that the narrow structure cannot monetize rather than deployable
 alpha. See [the option-flow ledger](docs/OPTION_FLOW_RESEARCH.md).
 
+Allowing $2 and $3 option-flow spreads did not change a single trade: every
+wider candidate exceeded the locked $100 maximum-loss cap, so all 175
+development entries remained $1 wide. The cap is doing its job, but it prevents
+scaling the possible gross signal. See
+[the adaptive option-flow ledger](docs/ADAPTIVE_OPTION_FLOW_RESEARCH.md).
+
 The default `TAKE_PROFIT_FRACTION=none` holds until the spread stop or hard
 close. `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry
 after a stop. You can raise it to three to reproduce the draft circuit breaker,
