@@ -51,3 +51,45 @@ temporary delta and gamma exposure.
 
 Paper fills remain simulated and the Basic indicative feed is not a substitute
 for live OPRA execution evidence.
+
+## Configure and run
+
+The scanner is read-only and does not require the order opt-in:
+
+```bash
+set -a; source .env; set +a
+.venv/bin/floor-surface-butterfly-probe doctor
+.venv/bin/floor-surface-butterfly-probe scan
+```
+
+After inspecting `doctor`, enable only the paper runner:
+
+```text
+ALPACA_PAPER=true
+LIVE_TRADING_CONFIRMED=false
+ALPACA_TRADING_URL=https://paper-api.alpaca.markets
+SURFACE_BUTTERFLY_PAPER_PROBE=true
+
+SURFACE_PROBE_STATE_PATH=state/surface_butterfly_probe_state.json
+SURFACE_PROBE_LOG_PATH=state/surface_butterfly_probe_events.jsonl
+SURFACE_PROBE_POLL_SECONDS=5
+```
+
+Then start the persistent process before 11:00 ET:
+
+```bash
+set -a; source .env; set +a
+.venv/bin/floor-surface-butterfly-probe run
+```
+
+Inspection commands never submit orders:
+
+```bash
+.venv/bin/floor-surface-butterfly-probe state
+.venv/bin/floor-surface-butterfly-probe report
+tail -f state/surface_butterfly_probe_events.jsonl
+```
+
+The process resets only after a completed prior session. If a prior-day entry
+or exit remains pending/open, it stops and requires manual reconciliation
+instead of assuming the paper position disappeared.

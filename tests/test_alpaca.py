@@ -128,6 +128,54 @@ def test_market_exit_omits_limit_price(config):
     assert "limit_price" not in payload
 
 
+def test_butterfly_order_preserves_atomic_one_two_one_ratios(config):
+    session = Session()
+    client = AlpacaClient(config, session=session)
+    legs = [
+        {
+            "symbol": "lower",
+            "ratio_qty": "1",
+            "side": "buy",
+            "position_intent": "buy_to_open",
+        },
+        {
+            "symbol": "middle",
+            "ratio_qty": "2",
+            "side": "sell",
+            "position_intent": "sell_to_open",
+        },
+        {
+            "symbol": "upper",
+            "ratio_qty": "1",
+            "side": "buy",
+            "position_intent": "buy_to_open",
+        },
+    ]
+
+    client.submit_multileg(
+        legs=legs,
+        quantity=1,
+        price=Decimal("0.04"),
+        client_order_id="surface-test",
+    )
+
+    payload = session.calls[0][2]["json"]
+    assert payload["order_class"] == "mleg"
+    assert payload["qty"] == "1"
+    assert payload["limit_price"] == "0.04"
+    assert [leg["ratio_qty"] for leg in payload["legs"]] == ["1", "2", "1"]
+    assert "side" not in payload
+
+
+def test_generic_contract_lookup_accepts_calls(config):
+    session = Session()
+    client = AlpacaClient(config, session=session)
+
+    client.option_contracts("2026-08-21", "call")
+
+    assert session.calls[0][2]["params"]["type"] == "call"
+
+
 def test_xsp_reference_uses_median_call_put_parity(config):
     session = ChainSession()
     client = AlpacaClient(replace(config, symbol="XSP"), session=session)

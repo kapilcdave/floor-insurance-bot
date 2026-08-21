@@ -34,6 +34,7 @@ floor-sparse-constituent-lead-research = "floor_insurance.sparse_constituent_lea
 floor-implied-condor-research = "floor_insurance.implied_condor_research:main"
 floor-conformal-condor-research = "floor_insurance.conformal_condor_research:main"
 floor-surface-butterfly-research = "floor_insurance.surface_butterfly_research:main"
+floor-surface-butterfly-probe = "floor_insurance.surface_butterfly_probe:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

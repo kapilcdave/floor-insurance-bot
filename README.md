@@ -225,6 +225,13 @@ Because historical one-minute prints are not synchronized executable quotes,
 this is a paper-probe candidate—not established live alpha. See
 [the surface-butterfly ledger](docs/SURFACE_BUTTERFLY_RESEARCH.md).
 
+The candidate now has a separate forward runner that scans current quote sides
+and submits a single `1:2:1` butterfly only as one atomic Alpaca paper order.
+It has an independent state file, append-only journal, explicit paper opt-in,
+60-second unchanged-limit timeout, noon exit, and Telegram notifications. Its
+read-only `scan` command can verify data plumbing without sending an order. See
+[the locked surface-butterfly paper protocol](docs/SURFACE_BUTTERFLY_PROBE.md).
+
 The default `TAKE_PROFIT_FRACTION=none` holds until the spread stop or hard
 close. `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry
 after a stop. You can raise it to three to reproduce the draft circuit breaker,
