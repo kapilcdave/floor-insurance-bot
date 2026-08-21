@@ -1,6 +1,6 @@
 # SPY 0DTE opening option-flow credit-spread research
 
-Status: **preregistered; not yet evaluated**.
+Status: **rejected after costs; final holdout remains sealed**.
 
 This experiment tests whether unusually one-sided activity in near-the-money
 SPY 0DTE options during the first 30 minutes contains directional information
@@ -80,3 +80,43 @@ holdout reveal.
 - Alpaca historical option trades are delayed, modified derivatives on the
   free indicative feed rather than actual OPRA data:
   <https://docs.alpaca.markets/us/docs/historical-option-data>
+
+## Result
+
+The locked run rejected the $1 spread after costs. It evaluated 433 training
+and 145 validation sessions while leaving May 26 through August 19, 2026
+sealed; the strategy-specific holdout cache audit was empty.
+
+| Split | Trades | Bull / bear | Wins | Average P&L | Total P&L | Profit factor | Max drawdown |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Training | 122 | 61 / 61 | 71 | -$4.03 | -$492.20 | 0.7673 | -$587.50 |
+| Validation | 53 | 28 / 25 | 29 | -$5.04 | -$267.30 | 0.7225 | -$267.30 |
+| Training stress | 122 | 61 / 61 | 66 | -$7.87 | -$960.20 | 0.5839 | -$1,033.70 |
+| Validation stress | 53 | 28 / 25 | 29 | -$8.89 | -$471.30 | 0.5517 | -$471.30 |
+
+The signal cleared both sample-size and two-direction gates, but missed every
+economic gate. Its 58.2% training and 54.7% validation win rates were
+insufficient for average entry credits of only $0.34 and $0.35.
+
+There is one useful diagnostic, not a promotion: base friction is at most $8.10
+per completed trade ($0.02 on two entry and two exit legs plus fees). Adding
+all of that back gives an optimistic friction-free upper bound of about +$4.07
+per training trade and +$3.06 per validation trade. Bounding at the spread
+width means actual removable friction can be smaller, so these are upper
+bounds, not a claim of gross profitability. The direction signal may contain a
+small amount of information, but a $1 spread cannot monetize it after costs.
+
+The deterministic bootstrap estimated only a 1.84% chance of a positive
+252-trade year for the rejected net model. Median annual P&L was -$1,080.20.
+The strategy is not promoted to paper orders and its threshold is not tuned.
+
+## Reproduce the rejected run
+
+```bash
+floor-option-flow-research \
+  --start 2024-02-01 \
+  --end 2026-08-19 \
+  --oos-start 2026-05-26 \
+  --cache-dir state/option-flow-cache \
+  --report-out state/option-flow-report.json
+```

@@ -166,6 +166,13 @@ wings; the broader structures that retain more tail premium generally violate
 the small-account risk cap. See
 [the adaptive-width ledger](docs/ADAPTIVE_IRON_FLY_RESEARCH.md).
 
+An opening option-flow signal was balanced across bullish and bearish entries
+and reached 122 training and 53 validation trades. Its $1 credit spreads still
+lost -$4.03 and -$5.04 per trade after two-leg costs. An optimistic removal of
+all modeled friction leaves only a few dollars per trade, suggesting a small
+gross signal that the narrow structure cannot monetize rather than deployable
+alpha. See [the option-flow ledger](docs/OPTION_FLOW_RESEARCH.md).
+
 The default `TAKE_PROFIT_FRACTION=none` holds until the spread stop or hard
 close. `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry
 after a stop. You can raise it to three to reproduce the draft circuit breaker,
