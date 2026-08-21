@@ -14,4 +14,5 @@ state/*.csv
 state/backtest-cache/
 state/atm-trend-cache*/
 state/implied-move-cache/
+state/fifty-credit-cache/
 !state/.gitkeep

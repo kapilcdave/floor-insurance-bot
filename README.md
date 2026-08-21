@@ -145,6 +145,13 @@ the experiment measures paper execution mechanics, not a proven trading edge.
 See [the SPY paper limit probe guide](docs/PAPER_PROBE.md) for the locked setup,
 safety interlocks, commands, and 20-session evaluation rule.
 
+The separately preregistered `$0.50` version has already failed its historical
+rejection screen. It traded only five of 433 training sessions, lost $109.50,
+and produced zero trades across 145 validation sessions. Four of the five
+training entries hit the spread stop. Its final 60-session holdout remains
+sealed because the development result misses every promotion gate. See
+[the fixed-credit research ledger](docs/FIFTY_CREDIT_RESEARCH.md).
+
 The default `TAKE_PROFIT_FRACTION=none` holds until the spread stop or hard
 close. `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry
 after a stop. You can raise it to three to reproduce the draft circuit breaker,

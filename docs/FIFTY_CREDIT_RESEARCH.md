@@ -1,6 +1,6 @@
 # Fixed $0.50 SPY credit research
 
-Status: **preregistered; results not evaluated**.
+Status: **rejected on training and validation; final holdout remains sealed**.
 
 This experiment asks whether selling a much closer SPY 0DTE put spread for a
 fixed $0.50 credit improves the economics enough to justify a one-contract live
@@ -95,6 +95,52 @@ check, implementation of a persistent $100 lifetime-loss breaker, and then a
 separately confirmed one-contract pilot in the funded $3,000 account. A failed
 development result leaves the live interlock in place and the final holdout
 sealed.
+
+## Result
+
+The locked run rejected the strategy before the final holdout. It evaluated
+433 training and 145 validation sessions. The May 26 through August 19, 2026
+holdout was neither loaded nor simulated, and its cache-file audit was empty.
+
+| Split | Trades | Wins | Stops | Average P&L | Total P&L | Profit factor | Max drawdown |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Training | 5 | 1 | 4 | -$21.90 | -$109.50 | 0.2954 | -$155.40 |
+| Validation | 0 | 0 | 0 | — | $0.00 | — | $0.00 |
+| Training stress | 5 | 1 | 4 | -$23.10 | -$115.50 | 0.2754 | -$159.40 |
+| Validation stress | 0 | 0 | 0 | — | $0.00 | — | $0.00 |
+
+The base model found a qualifying raw credit on only five training sessions,
+an entry rate of 1.2%. It skipped 421 training sessions because no candidate
+reached $0.54, four because both exact entry marks were unavailable, and three
+because the underlying entry minute was absent. Every validation session
+failed the raw-credit threshold.
+
+The five accepted training spreads showed $0.64 average raw credit and placed
+the short strike an average $4.40 below SPY. That apparent premium was not a
+free improvement in reward/risk: four of the five rich-credit sessions hit the
+$0.75 spread-debit stop, including one full $50.10 modeled loss. The premium
+appeared when the insured risk was unusually high.
+
+The deterministic bootstrap was correctly suppressed. Repeating five trades
+into 10,000 synthetic 252-trade years would manufacture precision rather than
+measure uncertainty.
+
+This misses every meaningful promotion gate: sample size, validation trades,
+average P&L, profit factor, and cost stress. No parameter was changed, the
+holdout remains sealed, and this result does not authorize the proposed live
+pilot. The existing `$0.30` paper order process remains an execution-mechanics
+probe only.
+
+## Reproduce the rejected run
+
+```bash
+floor-fifty-credit-research \
+  --start 2024-02-01 \
+  --end 2026-08-19 \
+  --oos-start 2026-05-26 \
+  --cache-dir state/fifty-credit-cache \
+  --report-out state/fifty-credit-report.json
+```
 
 ## Data limitation
 
