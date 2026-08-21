@@ -221,11 +221,15 @@ class AlpacaClient:
                 return quotes
             params["page_token"] = token
 
-    def put_contracts(self, expiration_date: str) -> list[Contract]:
+    def option_contracts(
+        self, expiration_date: str, option_type: str
+    ) -> list[Contract]:
+        if option_type not in {"call", "put"}:
+            raise ValueError("option_type must be call or put")
         params: dict[str, Any] = {
             "underlying_symbols": self.config.symbol,
             "expiration_date": expiration_date,
-            "type": "put",
+            "type": option_type,
             "status": "active",
             "limit": 1000,
         }
@@ -246,6 +250,9 @@ class AlpacaClient:
             if not token:
                 return contracts
             params["page_token"] = token
+
+    def put_contracts(self, expiration_date: str) -> list[Contract]:
+        return self.option_contracts(expiration_date, "put")
 
     def option_quotes(
         self, symbols: list[str], *, allow_missing: bool = False
@@ -311,6 +318,33 @@ class AlpacaClient:
                     "position_intent": "sell_to_close",
                 },
             ]
+        signed = None if price is None else (-price if opening else price)
+        return self.submit_multileg(
+            legs=legs,
+            quantity=quantity,
+            price=signed,
+            client_order_id=client_order_id,
+        )
+
+    def submit_multileg(
+        self,
+        *,
+        legs: list[dict[str, str]],
+        quantity: int,
+        price: Decimal | None,
+        client_order_id: str,
+    ) -> dict[str, Any]:
+        """Submit one atomic option strategy.
+
+        Alpaca signs parent prices from the buyer's perspective: positive is a
+        net debit and negative is a net credit. ``ratio_qty`` belongs on each
+        leg while the parent quantity is the number of complete strategy units.
+        """
+
+        if quantity < 1:
+            raise ValueError("multi-leg quantity must be positive")
+        if not 2 <= len(legs) <= 4:
+            raise ValueError("multi-leg orders require two through four legs")
         payload: dict[str, Any] = {
             "order_class": "mleg",
             "qty": str(quantity),
@@ -320,8 +354,7 @@ class AlpacaClient:
             "legs": legs,
         }
         if price is not None:
-            signed = -price if opening else price
-            payload["limit_price"] = str(signed.quantize(Decimal("0.01")))
+            payload["limit_price"] = str(price.quantize(Decimal("0.01")))
         return self._request(
             "POST", self.config.trading_base_url, "/v2/orders", payload=payload
         )
