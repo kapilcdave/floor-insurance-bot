@@ -81,6 +81,7 @@ class LeadResult:
     threshold: Decimal = Decimal("0")
     gross_return: Decimal = Decimal("0")
     net_return: Decimal = Decimal("0")
+    member_count: int = 0
 
 
 def _at(bars: list[PriceBar], moment: time) -> PriceBar | None:
@@ -101,6 +102,40 @@ def member_return_history(
     result: dict[str, Decimal] = {}
     for trading_date, bars in sessions.items():
         value = observed_return(bars, settings)
+        if value is not None:
+            result[trading_date] = value
+    return result
+
+
+def covered_window_return(
+    bars: list[PriceBar], settings: LeadSettings
+) -> Decimal | None:
+    window = sorted(
+        (
+            bar
+            for bar in bars
+            if settings.observation_start
+            <= bar.timestamp.time()
+            <= settings.observation_end
+        ),
+        key=lambda bar: bar.timestamp,
+    )
+    if len(window) < 2:
+        return None
+    first, last = window[0], window[-1]
+    if first.timestamp.time() > time(10, 56) or last.timestamp.time() < time(10, 58):
+        return None
+    if first.open <= 0:
+        return None
+    return ((last.close / first.open) - Decimal("1")).quantize(RATIO)
+
+
+def sparse_member_return_history(
+    sessions: dict[str, list[PriceBar]], settings: LeadSettings
+) -> dict[str, Decimal]:
+    result: dict[str, Decimal] = {}
+    for trading_date, bars in sessions.items():
+        value = covered_window_return(bars, settings)
         if value is not None:
             result[trading_date] = value
     return result
@@ -137,6 +172,27 @@ def lead_residual(
         values.append(value)
     basket = Decimal(str(mean(values)))
     return (basket - observation.observed_return).quantize(RATIO)
+
+
+def sparse_lead_residual(
+    trading_date: str,
+    spy: dict[str, SpyObservation],
+    members: dict[str, dict[str, Decimal]],
+    minimum_members: int = 8,
+    constituents: tuple[str, ...] = CONSTITUENTS,
+) -> tuple[Decimal, int] | None:
+    observation = spy.get(trading_date)
+    if observation is None:
+        return None
+    values = [
+        members[symbol][trading_date]
+        for symbol in constituents
+        if trading_date in members.get(symbol, {})
+    ]
+    if len(values) < minimum_members:
+        return None
+    basket = Decimal(str(mean(values)))
+    return (basket - observation.observed_return).quantize(RATIO), len(values)
 
 
 def nearest_rank_percentile(
@@ -197,6 +253,60 @@ def simulate_lead_session(
     )
 
 
+def simulate_sparse_lead_session(
+    trading_date: str,
+    spy: dict[str, SpyObservation],
+    members: dict[str, dict[str, Decimal]],
+    prior_absolute_residuals: list[Decimal],
+    settings: LeadSettings,
+    minimum_members: int = 8,
+) -> LeadResult:
+    observed = sparse_lead_residual(
+        trading_date, spy, members, minimum_members=minimum_members
+    )
+    if observed is None:
+        return LeadResult(trading_date, False, "fewer than eight covered members")
+    residual, member_count = observed
+    if len(prior_absolute_residuals) < settings.lookback_sessions:
+        return LeadResult(
+            trading_date,
+            False,
+            "insufficient trailing residual history",
+            residual=residual,
+            member_count=member_count,
+        )
+    threshold = nearest_rank_percentile(
+        prior_absolute_residuals[-settings.lookback_sessions :],
+        settings.threshold_percentile,
+    )
+    if abs(residual) < threshold or residual == 0:
+        return LeadResult(
+            trading_date,
+            False,
+            "lead residual is below trailing threshold",
+            residual=residual,
+            threshold=threshold,
+            member_count=member_count,
+        )
+    observation = spy[trading_date]
+    direction = "bullish" if residual > 0 else "bearish"
+    multiplier = Decimal("1") if direction == "bullish" else Decimal("-1")
+    underlying_return = observation.exit_price / observation.entry_price - Decimal("1")
+    gross = (multiplier * underlying_return).quantize(RATIO)
+    net = (gross - settings.round_trip_cost).quantize(RATIO)
+    return LeadResult(
+        trading_date,
+        True,
+        "thirty_minute_exit",
+        direction,
+        residual,
+        threshold,
+        gross,
+        net,
+        member_count,
+    )
+
+
 def chronological_splits(dates: list[str]) -> dict[str, set[str]]:
     if len(dates) < 10:
         raise ValueError("at least 10 development sessions are required")
@@ -221,6 +331,7 @@ def lead_metrics(results: list[LeadResult]) -> dict[str, object]:
         max_drawdown = min(max_drawdown, cumulative - peak)
     gross_profit = sum(wins, Decimal("0"))
     gross_loss = abs(sum(losses, Decimal("0")))
+    member_counts = [result.member_count for result in signaled if result.member_count]
     skips: dict[str, int] = {}
     for result in results:
         if not result.signaled:
@@ -254,6 +365,12 @@ def lead_metrics(results: list[LeadResult]) -> dict[str, object]:
         "max_drawdown_percent": str(
             (max_drawdown * Decimal("100")).quantize(Decimal("0.01"))
         ),
+        "average_member_count": (
+            str(Decimal(str(mean(member_counts))).quantize(Decimal("0.01")))
+            if member_counts
+            else None
+        ),
+        "minimum_member_count": min(member_counts) if member_counts else None,
         "skips": skips,
     }
 
