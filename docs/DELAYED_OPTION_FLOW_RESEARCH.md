@@ -1,6 +1,6 @@
 # Deployable delayed option-flow research
 
-Status: **preregistered; not yet evaluated**.
+Status: **rejected; final holdout remains sealed**.
 
 The original opening-flow signal is modestly positive only under extremely
 good modeled execution, and Alpaca documents that free indicative option
@@ -48,3 +48,39 @@ measurement, not live money.
 See [the original flow ledger](OPTION_FLOW_RESEARCH.md) for sources and the
 bar-sign limitation. Alpaca's free-trade delay is documented at
 <https://docs.alpaca.markets/us/docs/historical-option-data>.
+
+## Result
+
+The locked delayed version failed and did not access the 60-session final
+holdout. The strategy-specific cache audit found no May 26 through August 19
+option file.
+
+| Split | Trades | Bull / bear | Wins | Average P&L | Profit factor | Max drawdown |
+|---|---:|---:|---:|---:|---:|---:|
+| Training | 130 | 61 / 69 | 64 | -$8.47 | 0.5533 | -$1,201.50 |
+| Validation | 58 | 29 / 29 | 33 | -$4.57 | 0.7465 | -$295.60 |
+| Training stress | 130 | 61 / 69 | 64 | -$12.28 | 0.4095 | -$1,677.50 |
+| Validation stress | 58 | 29 / 29 | 33 | -$8.39 | 0.5709 | -$509.60 |
+
+The mandatory delay materially weakened the signal. Training win rate fell
+from 58.2% at 10:00 to 49.2% at 10:15. Adding back the full $8.10 base friction
+budget is again only an optimistic upper bound; it would leave training around
+-$0.37 per trade, while validation would be around +$3.53. The deployment-
+compatible signal is therefore not consistently positive even before
+meaningful execution friction.
+
+This result closes the free-delayed-flow path. Changing the entry time or
+threshold after observing it would be data mining, and assuming access to
+real-time OPRA would violate the no-paid-data constraint. No paper or live
+order path is added.
+
+## Reproduce the rejected run
+
+```bash
+floor-delayed-option-flow-research \
+  --start 2024-02-01 \
+  --end 2026-08-19 \
+  --oos-start 2026-05-26 \
+  --cache-dir state/delayed-option-flow-cache \
+  --report-out state/delayed-option-flow-report.json
+```

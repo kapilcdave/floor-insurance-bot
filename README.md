@@ -179,6 +179,12 @@ development entries remained $1 wide. The cap is doing its job, but it prevents
 scaling the possible gross signal. See
 [the adaptive option-flow ledger](docs/ADAPTIVE_OPTION_FLOW_RESEARCH.md).
 
+The deployment-compatible flow test waited until 10:15 because free Alpaca
+option trades are delayed. The information decayed: training fell to a 49.2%
+win rate and -$8.47 per trade; validation averaged -$4.57. Even an optimistic
+removal of all modeled friction leaves training slightly negative. See
+[the delayed-flow ledger](docs/DELAYED_OPTION_FLOW_RESEARCH.md).
+
 The default `TAKE_PROFIT_FRACTION=none` holds until the spread stop or hard
 close. `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry
 after a stop. You can raise it to three to reproduce the draft circuit breaker,
