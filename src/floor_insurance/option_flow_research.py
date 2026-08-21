@@ -68,6 +68,7 @@ class OptionFlowResult:
     maximum_risk: Decimal = Decimal("0")
     exit_debit: Decimal = Decimal("0")
     pnl: Decimal = Decimal("0")
+    width: Decimal = Decimal("0")
 
 
 def _at(bars: list[PriceBar], moment: time) -> PriceBar | None:
@@ -287,6 +288,7 @@ def simulate_option_flow(
         maximum_risk,
         exit_debit,
         pnl,
+        settings.width,
     )
 
 

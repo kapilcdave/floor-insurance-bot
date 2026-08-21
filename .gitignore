@@ -18,4 +18,5 @@ state/fifty-credit-cache/
 state/iron-fly-cache/
 state/adaptive-iron-fly-cache/
 state/option-flow-cache/
+state/adaptive-option-flow-cache/
 !state/.gitkeep
