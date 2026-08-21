@@ -232,6 +232,43 @@ def test_runner_records_fill_noon_markout_exit_and_signed_pnl(tmp_path):
     assert summary["gross_pnl"] == "6.00"
 
 
+def test_mechanics_probe_can_enter_outside_locked_window_and_labels_events(tmp_path):
+    entered = datetime(2026, 8, 21, 13, 0, tzinfo=ET)
+    client = FakeClient(entered)
+    config = probe_config(tmp_path).as_mechanics_only()
+    config = replace(
+        config,
+        state_path=tmp_path / "mechanics-state.json",
+        journal_path=tmp_path / "mechanics-events.jsonl",
+    )
+    runner = SurfaceProbeRunner(config, client)
+
+    runner.tick(entered)
+    client.orders["order-1"].update(
+        status="filled", filled_qty="1", filled_avg_price="0.04"
+    )
+    client.now = entered + timedelta(seconds=5)
+    client.quotes = candidate_quotes(client.now)
+    runner.tick(client.now)
+
+    state = runner.store.load(DAY)
+    assert state.phase == "open"
+    assert state.scheduled_exit_at == "2026-08-21T14:00:05-04:00"
+    events = config.journal_path.read_text(encoding="utf-8")
+    assert '"cohort": "mechanics_only"' in events
+
+
+def test_mechanics_probe_refuses_closed_market(tmp_path):
+    now = datetime(2026, 8, 21, 16, 30, tzinfo=ET)
+    client = FakeClient(now)
+    client.clock = lambda: {"is_open": False}
+    config = probe_config(tmp_path).as_mechanics_only()
+    runner = SurfaceProbeRunner(config, client)
+
+    with pytest.raises(SurfaceProbeError, match="open regular options session"):
+        runner.tick(now)
+
+
 def test_runner_refuses_live_or_unconfirmed_configuration(tmp_path):
     config = probe_config(tmp_path)
     with pytest.raises(SurfaceProbeError, match="paper-only"):

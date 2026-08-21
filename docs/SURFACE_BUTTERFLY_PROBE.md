@@ -130,3 +130,19 @@ mechanics:
 It still refuses closed markets, extended hours, live endpoints, and a missing
 `SURFACE_BUTTERFLY_PAPER_PROBE=true` interlock. This command answers whether the
 order path works; it cannot answer whether the 11:00 signal has alpha.
+
+During an open session, launch the isolated mechanics test with:
+
+```bash
+set -a; source .env; set +a
+SURFACE_BUTTERFLY_PAPER_PROBE=true \
+  .venv/bin/floor-surface-butterfly-probe probe-now
+```
+
+Inspect its separate records with:
+
+```bash
+.venv/bin/floor-surface-butterfly-probe mechanics-state
+.venv/bin/floor-surface-butterfly-probe mechanics-report
+tail -f state/surface_butterfly_mechanics_events.jsonl
+```

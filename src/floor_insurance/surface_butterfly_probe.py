@@ -9,8 +9,8 @@ import os
 import signal
 import sys
 import time as time_module
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, time, timezone
+from dataclasses import asdict, dataclass, field, replace
+from datetime import datetime, time, timedelta, timezone
 from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
@@ -100,6 +100,9 @@ class SurfaceProbeConfig:
     journal_path: Path = Path("state/surface_butterfly_probe_events.jsonl")
     telegram_token: str | None = None
     telegram_chat_id: str | None = None
+    mechanics_only: bool = False
+    mechanics_entry_start: time = time(9, 45)
+    mechanics_entry_cutoff: time = time(14, 0)
 
     @classmethod
     def from_env(cls, *, require_credentials: bool = True) -> SurfaceProbeConfig:
@@ -174,6 +177,24 @@ class SurfaceProbeConfig:
                 "order submission blocked: set SURFACE_BUTTERFLY_PAPER_PROBE=true "
                 "with paper credentials"
             )
+
+    def as_mechanics_only(self) -> SurfaceProbeConfig:
+        return replace(
+            self,
+            mechanics_only=True,
+            state_path=Path(
+                os.getenv(
+                    "SURFACE_MECHANICS_STATE_PATH",
+                    "state/surface_butterfly_mechanics_state.json",
+                )
+            ),
+            journal_path=Path(
+                os.getenv(
+                    "SURFACE_MECHANICS_LOG_PATH",
+                    "state/surface_butterfly_mechanics_events.jsonl",
+                )
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -475,6 +496,7 @@ class SurfaceProbeState:
     entry_cancel_requested_at: str | None = None
     entry_filled_at: str | None = None
     entry_signed_price: str | None = None
+    scheduled_exit_at: str | None = None
     exit_client_id: str | None = None
     exit_order_id: str | None = None
     exit_submitted_at: str | None = None
@@ -532,7 +554,8 @@ class SurfaceProbeRunner:
         self.journal = PaperProbeJournal(config.journal_path)
 
     def _note(self, event: str, now: datetime, **details: Any) -> None:
-        self.journal.write(event, now, **details)
+        cohort = "mechanics_only" if self.config.mechanics_only else "locked_1100"
+        self.journal.write(event, now, cohort=cohort, **details)
 
     def _submit_or_reconcile(
         self,
@@ -566,13 +589,36 @@ class SurfaceProbeRunner:
         if state.phase == "entry_pending":
             self._manage_entry(state, now)
         elif state.phase == "open":
-            if now.time() >= self.config.exit_time:
-                self._submit_exit(state, now, "noon_markout")
+            if state.scheduled_exit_at:
+                exit_at = datetime.fromisoformat(state.scheduled_exit_at).astimezone(ET)
+            else:
+                exit_at = datetime.combine(now.date(), self.config.exit_time, ET)
+            if now >= exit_at:
+                reason = (
+                    "mechanics_one_hour" if self.config.mechanics_only else "noon_markout"
+                )
+                self._submit_exit(state, now, reason)
         elif state.phase == "exit_pending":
             self._manage_exit(state, now)
         elif state.phase == "idle":
             clock = self.client.clock()
             if not clock.get("is_open"):
+                if self.config.mechanics_only:
+                    raise SurfaceProbeError(
+                        "probe-now requires an open regular options session"
+                    )
+                return self.config.poll_seconds
+            if self.config.mechanics_only:
+                if not (
+                    self.config.mechanics_entry_start
+                    <= now.time()
+                    <= self.config.mechanics_entry_cutoff
+                ):
+                    raise SurfaceProbeError(
+                        "probe-now is allowed only from 09:45 through 14:00 ET"
+                    )
+                self._enter(state, now)
+                self.store.save(state)
                 return self.config.poll_seconds
             if now.time() < self.config.entry_time:
                 return self.config.poll_seconds
@@ -660,6 +706,13 @@ class SurfaceProbeRunner:
             signed_price = Decimal(str(order.get("filled_avg_price") or "0"))
             state.entry_signed_price = str(signed_price)
             state.entry_filled_at = now.isoformat()
+            regular_exit = datetime.combine(now.date(), self.config.exit_time, ET)
+            if self.config.mechanics_only:
+                hard_close = datetime.combine(
+                    now.date(), self.config.hard_close_time, ET
+                )
+                regular_exit = min(now + timedelta(hours=1), hard_close)
+            state.scheduled_exit_at = regular_exit.isoformat()
             state.phase = "open"
             state.last_event = "entry filled"
             seconds = self._seconds_since(state.entry_submitted_at, now)
@@ -672,7 +725,8 @@ class SurfaceProbeRunner:
                 cancel_was_requested=bool(state.entry_cancel_requested_at),
             )
             self.notifier.send(
-                f"PAPER butterfly filled at signed price {signed_price}; scheduled exit 12:00 ET."
+                f"PAPER butterfly filled at signed price {signed_price}; "
+                f"scheduled exit {regular_exit:%H:%M} ET."
             )
             return
         if status in TERMINAL_FAILURES:
@@ -856,7 +910,17 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("run", "once", "scan", "doctor", "state", "report"),
+        choices=(
+            "run",
+            "once",
+            "scan",
+            "probe-now",
+            "doctor",
+            "state",
+            "report",
+            "mechanics-state",
+            "mechanics-report",
+        ),
         default="run",
     )
     return parser
@@ -870,12 +934,15 @@ def main() -> int:
     args = _parser().parse_args()
     try:
         config = SurfaceProbeConfig.from_env(
-            require_credentials=args.command not in {"state", "report"}
+            require_credentials=args.command
+            not in {"state", "report", "mechanics-state", "mechanics-report"}
         )
-        if args.command == "report":
+        if args.command in {"probe-now", "mechanics-state", "mechanics-report"}:
+            config = config.as_mechanics_only()
+        if args.command in {"report", "mechanics-report"}:
             print(json.dumps(journal_summary(config.journal_path), indent=2))
             return 0
-        if args.command == "state":
+        if args.command in {"state", "mechanics-state"}:
             state = SurfaceStateStore(config.state_path).load(
                 datetime.now(ET).date().isoformat()
             )
@@ -920,6 +987,13 @@ def main() -> int:
         if args.command == "once":
             runner.tick()
             return 0
+        if args.command == "probe-now":
+            while True:
+                runner.tick()
+                state = runner.store.load(datetime.now(ET).date().isoformat())
+                if state.phase == "done":
+                    return 0
+                time_module.sleep(config.poll_seconds)
 
         stopping = False
 

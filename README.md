@@ -231,6 +231,9 @@ It has an independent state file, append-only journal, explicit paper opt-in,
 60-second unchanged-limit timeout, noon exit, and Telegram notifications. Its
 read-only `scan` command can verify data plumbing without sending an order. See
 [the locked surface-butterfly paper protocol](docs/SURFACE_BUTTERFLY_PROBE.md).
+Its separate `probe-now` command can test paper-order mechanics from 09:45 to
+14:00 ET without contaminating the locked 11:00 forward cohort; those events
+are isolated and explicitly excluded from alpha evaluation.
 
 The default `TAKE_PROFIT_FRACTION=none` holds until the spread stop or hard
 close. `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry
