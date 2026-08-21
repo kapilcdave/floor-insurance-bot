@@ -105,3 +105,28 @@ and it does not count toward the 20-session forward test.
 
 This plumbing observation demonstrates current contract discovery, quote-side
 math, and candidate ranking. It is not fill evidence or a profitable trade.
+
+## On-demand paper mechanics cohort
+
+The 11:00–11:05 window is a research control, not an Alpaca restriction. It
+matches the historical experiment's 11:00 entry and noon valuation. Moving
+those entries would make the 20-session forward cohort incomparable with the
+development result.
+
+A separate `probe-now` command is authorized strictly for testing broker
+mechanics:
+
+- it may enter once whenever the regular session is open from 09:45 through
+  14:00 ET;
+- it uses the identical quote, gap, debit, atomic-order, size, and 60-second
+  no-chase rules;
+- it exits one hour after the actual fill or at 15:00 ET, whichever comes
+  first;
+- it writes separate `surface_butterfly_mechanics` state and journal files;
+- every event is labeled `cohort=mechanics_only`; and
+- none of its candidates, fills, markouts, or P&L count toward strategy
+  validation or the 20-session 11:00 forward cohort.
+
+It still refuses closed markets, extended hours, live endpoints, and a missing
+`SURFACE_BUTTERFLY_PAPER_PROBE=true` interlock. This command answers whether the
+order path works; it cannot answer whether the 11:00 signal has alpha.
