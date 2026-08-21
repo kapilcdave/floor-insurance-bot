@@ -191,6 +191,13 @@ zero training signals because the free IEX feed is too sparse as a complete
 cross-section. Its cache stops before the final holdout. See
 [the constituent lead ledger](docs/CONSTITUENT_LEAD_RESEARCH.md).
 
+A preregistered sparse-IEX fallback required 8 of 12 members with coverage near
+both window endpoints. It generated 105 training and 44 validation signals but
+failed the stock-only gate: -0.48 net basis points per training signal and
+-5.18 in validation, with validation profit factor 0.4003. No options were
+tested around it. See
+[the sparse constituent ledger](docs/SPARSE_CONSTITUENT_LEAD_RESEARCH.md).
+
 The default `TAKE_PROFIT_FRACTION=none` holds until the spread stop or hard
 close. `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry
 after a stop. You can raise it to three to reproduce the draft circuit breaker,
