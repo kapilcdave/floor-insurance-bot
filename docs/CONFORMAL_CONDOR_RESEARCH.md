@@ -1,6 +1,6 @@
 # Online conformal SPY 0DTE iron-condor research
 
-Status: **preregistered; results not yet evaluated**.
+Status: **rejected on training and validation; final holdout remains sealed**.
 
 This experiment tests a distributional pricing hypothesis rather than a fixed
 technical rule. A lightweight HAR-style model forecasts SPY's absolute move
@@ -102,3 +102,49 @@ Alpaca Basic history is not a synchronized OPRA quote history. The bar-based
 fill model can reject a strategy but cannot prove that a live atomic order was
 executable. No amount of conformal calibration removes that limitation.
 
+## Result
+
+The forecast passed its calibration gate but the trade failed its availability,
+sample-size, and economic gates. The run evaluated 433 training and 145
+validation sessions while leaving all 60 sessions from May 26 through August
+19, 2026 sealed. The strategy-specific holdout cache audit was empty.
+
+| Split | Forecasts | Containment | Trades | Average credit | Average P&L | Profit factor | Max drawdown |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Training | 245 | 93.88% | 11 | $0.17 | -$12.75 | 0.2728 | -$173.40 |
+| Validation | 145 | 94.48% | 5 | $0.28 | -$16.80 | 0.1876 | -$90.80 |
+| Training stress | 245 | 93.88% | 8 | $0.17 | -$12.08 | 0.1869 | -$116.00 |
+| Validation stress | 145 | 94.48% | 5 | $0.26 | -$20.40 | 0.0778 | -$104.80 |
+
+The model's realized containment sits inside the preregistered 85% through 95%
+band on both chronological splits. The average upper move was $8.17 in training
+and $8.96 in validation. Those honest tail bounds pushed the short strikes so
+far from SPY that most $1 wings either lacked an exact trade at 11:00 or paid
+less than the $0.10 minimum credit. Only 16 base trades survived, far below the
+required 100 and 30.
+
+The few surviving trades were not promising. Seven of 11 training trades and
+three of five validation trades won, yet one tail loss overwhelmed several
+small credits. Refunding the entire $4.20 base round-trip friction assumption
+would still leave average P&L near -$8.55 and -$12.60. The negative result is
+therefore not explained by the half-cent per-leg fill model.
+
+This experiment separates forecasting from trading: the conformal model
+delivered the requested coverage, but correctly calibrated insurance was too
+far out of the money to monetize with a small defined-risk spread. Narrowing
+the coverage after seeing this result would simply understate tail risk and is
+not permitted. No bootstrap is reported because 16 trades cannot support one.
+
+The strategy is not connected to paper or live orders, and the holdout remains
+sealed.
+
+## Reproduce the rejected run
+
+```bash
+floor-conformal-condor-research \
+  --start 2024-02-01 \
+  --end 2026-08-19 \
+  --oos-start 2026-05-26 \
+  --cache-dir state/conformal-condor-cache \
+  --report-out state/conformal-condor-report.json
+```

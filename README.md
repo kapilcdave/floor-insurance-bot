@@ -206,6 +206,14 @@ and -$10.22 after base costs, with profit factors near 0.42. Even removing every
 modeled fill cost and fee leaves validation negative. See
 [the implied-condor ledger](docs/IMPLIED_CONDOR_RESEARCH.md).
 
+An online ridge/HAR-style volatility model with rolling conformal calibration
+then replaced fixed strike distances. Its nominal 90% range was honestly
+calibrated at 93.9% in training and 94.5% in validation, but averaged $8 to $9
+wide. Options outside that range rarely paid ten cents: only 11 training and
+five validation trades survived, averaging -$12.75 and -$16.80. Advanced
+forecast calibration did not create a monetizable option-pricing edge. See
+[the conformal-condor ledger](docs/CONFORMAL_CONDOR_RESEARCH.md).
+
 The default `TAKE_PROFIT_FRACTION=none` holds until the spread stop or hard
 close. `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry
 after a stop. You can raise it to three to reproduce the draft circuit breaker,
