@@ -32,6 +32,7 @@ floor-delayed-option-flow-research = "floor_insurance.delayed_option_flow_resear
 floor-constituent-lead-research = "floor_insurance.constituent_lead_research:main"
 floor-sparse-constituent-lead-research = "floor_insurance.sparse_constituent_lead_research:main"
 floor-implied-condor-research = "floor_insurance.implied_condor_research:main"
+floor-conformal-condor-research = "floor_insurance.conformal_condor_research:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
