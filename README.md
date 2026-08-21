@@ -214,6 +214,17 @@ five validation trades survived, averaging -$12.75 and -$16.80. Advanced
 forecast calibration did not create a monetizable option-pricing edge. See
 [the conformal-condor ledger](docs/CONFORMAL_CONDOR_RESEARCH.md).
 
+The first strategy to pass its locked development gate is a local surface
+relative-value butterfly. It compares identically struck call and put
+butterflies, buys the cheaper one for at most $0.10, and exits one hour later.
+Training produced 291 trades averaging +$4.10 with profit factor 4.01;
+validation produced 106 averaging +$2.92 with profit factor 2.85. It remained
+positive at the preregistered one-cent-per-contract-unit stress. However,
+validation falls to only +$0.27 at two cents and turns negative at three cents.
+Because historical one-minute prints are not synchronized executable quotes,
+this is a paper-probe candidate—not established live alpha. See
+[the surface-butterfly ledger](docs/SURFACE_BUTTERFLY_RESEARCH.md).
+
 The default `TAKE_PROFIT_FRACTION=none` holds until the spread stop or hard
 close. `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry
 after a stop. You can raise it to three to reproduce the draft circuit breaker,
