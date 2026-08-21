@@ -1,6 +1,6 @@
 # SPY 0DTE variance-premium iron-fly research
 
-Status: **preregistered; not yet evaluated**.
+Status: **rejected on training and validation; final holdout remains sealed**.
 
 This experiment tests a specific economic hypothesis: same-day SPY options can
 price intraday jump and variance risk above subsequently realized movement. It
@@ -103,3 +103,54 @@ structure.
 - <https://www.sciencedirect.com/science/article/pii/S0304407624000782>
 - <https://bmvh162.ust.hk/bizinsight/2026/04/are-0dte-options-mispriced>
 - <https://docs.alpaca.markets/us/docs/historical-option-data>
+
+## Result
+
+The locked run rejected the strategy. It evaluated 433 training and 145
+validation sessions while leaving all 60 sessions from May 26 through August
+19, 2026 sealed. The strategy-specific audit found no option cache file in that
+holdout.
+
+| Split | Trades | Wins | Average P&L | Total P&L | Profit factor | Max drawdown |
+|---|---:|---:|---:|---:|---:|---:|
+| Training | 155 | 46 | -$16.63 | -$2,577.00 | 0.2389 | -$2,577.00 |
+| Validation | 59 | 20 | -$13.98 | -$824.80 | 0.2680 | -$853.60 |
+| Training stress | 153 | 33 | -$23.89 | -$3,654.60 | 0.1200 | -$3,654.60 |
+| Validation stress | 59 | 14 | -$21.01 | -$1,239.80 | 0.1232 | -$1,260.60 |
+
+The sample-size gates were met, so this was not a failure caused by rare
+entries. The richness filter admitted 35.8% of training sessions after the
+20-session warmup and 40.7% of validation sessions. Average modeled maximum
+risk was $56.30 in training and $47.37 in validation, comfortably inside the
+$100 cap. The economics still failed: only 29.7% and 33.9% of trades won, and
+both chronological splits lost heavily.
+
+Base four-leg adverse fills and fees impose $16.20 per completed trade before
+any cap interaction. Adding that entire amount back is an intentionally
+optimistic friction-free upper bound: training would still average about
+-$0.43 and validation only about +$2.22. That is far too little and too
+unstable to establish an edge. The stress result deteriorates by another $7 to
+$8 per trade.
+
+The structural diagnosis is that a narrow defined-risk fly buys back much of
+the tail insurance premium through its two wings. What remains is approximately
+flat before friction and decisively negative after four-leg execution costs.
+Changing the richness threshold after seeing this result would be data mining,
+so the parameter stays frozen and the strategy is not promoted to the paper
+order probe.
+
+The bootstrap agrees rather than rescuing the trade: across 10,000
+five-trade-block paths, the estimated probability of a positive 252-trade year
+was zero, with median annual P&L of -$4,008.40. Those numbers describe this
+rejected historical model; they are not a forecast.
+
+## Reproduce the rejected run
+
+```bash
+floor-iron-fly-research \
+  --start 2024-02-01 \
+  --end 2026-08-19 \
+  --oos-start 2026-05-26 \
+  --cache-dir state/iron-fly-cache \
+  --report-out state/iron-fly-report.json
+```

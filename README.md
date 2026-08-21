@@ -152,6 +152,13 @@ training entries hit the spread stop. Its final 60-session holdout remains
 sealed because the development result misses every promotion gate. See
 [the fixed-credit research ledger](docs/FIFTY_CREDIT_RESEARCH.md).
 
+A direction-neutral variance-premium test also failed. The locked $2-wing SPY
+iron fly produced 155 training and 59 validation trades, but averaged -$16.63
+and -$13.98 per trade after conservative four-leg costs. The narrow wings buy
+back most of the tail premium, leaving too little gross edge to survive
+execution. Its final 60 sessions remain sealed, and it is not connected to the
+order engine. See [the iron-fly research ledger](docs/IRON_FLY_RESEARCH.md).
+
 The default `TAKE_PROFIT_FRACTION=none` holds until the spread stop or hard
 close. `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry
 after a stop. You can raise it to three to reproduce the draft circuit breaker,
