@@ -110,6 +110,27 @@ The deterministic bootstrap estimated only a 1.84% chance of a positive
 252-trade year for the rejected net model. Median annual P&L was -$1,080.20.
 The strategy is not promoted to paper orders and its threshold is not tuned.
 
+### Post-result execution sensitivity
+
+The fixed signal was replayed without changing entries across a per-leg
+adverse-fill curve. The $0.10 fee assumption remained in every row. This is a
+diagnostic of the possible gross effect, not a new acceptance test.
+
+| Adverse fill per leg, each side | Train avg / PF | Validation avg / PF |
+|---:|---:|---:|
+| $0.000 | +$3.72 / 1.2598 | +$2.81 / 1.1898 |
+| $0.005 | +$1.79 / 1.1186 | +$0.82 / 1.0528 |
+| $0.010 | -$0.17 / 0.9895 | -$1.16 / 0.9298 |
+| $0.015 | -$2.10 / 0.8732 | -$3.12 / 0.8202 |
+| $0.020 | -$4.03 / 0.7673 | -$5.04 / 0.7225 |
+| $0.030 | -$7.87 / 0.5839 | -$8.89 / 0.5517 |
+
+The sign is consistent before meaningful friction, but even perfect modeled
+fills miss the 1.25 validation profit-factor gate. One cent per leg makes both
+splits negative. Any forward investigation must therefore measure unchanged
+atomic limit fills; assuming midpoint execution would manufacture the desired
+result.
+
 ## Reproduce the rejected run
 
 ```bash
