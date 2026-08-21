@@ -185,6 +185,12 @@ win rate and -$8.47 per trade; validation averaged -$4.57. Even an optimistic
 removal of all modeled friction leaves training slightly negative. See
 [the delayed-flow ledger](docs/DELAYED_OPTION_FLOW_RESEARCH.md).
 
+A stock-only constituent lead-lag gate was also attempted before pricing any
+options. Requiring exact five-minute endpoint bars for all 12 names yielded
+zero training signals because the free IEX feed is too sparse as a complete
+cross-section. Its cache stops before the final holdout. See
+[the constituent lead ledger](docs/CONSTITUENT_LEAD_RESEARCH.md).
+
 The default `TAKE_PROFIT_FRACTION=none` holds until the spread stop or hard
 close. `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry
 after a stop. You can raise it to three to reproduce the draft circuit breaker,

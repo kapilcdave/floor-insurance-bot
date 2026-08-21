@@ -1,6 +1,6 @@
 # SPY constituent lead-lag research
 
-Status: **preregistered; not yet evaluated**.
+Status: **rejected for IEX data sparsity; final holdout remains undownloaded**.
 
 This experiment tests a new input family before touching options. Published
 research reports that lagged constituent returns contain short-horizon index
@@ -68,3 +68,31 @@ not reveal the holdout or authorize paper/live orders.
 
 Primary mechanism:
 <https://academic.oup.com/jfec/article-abstract/21/2/485/6400345>.
+
+## Result
+
+The strict exact-bar specification could not be evaluated economically. Of 416
+training sessions, 399 lacked at least one of the 26 required constituent
+endpoint bars and the remaining 17 were consumed by the 60-observation warmup.
+It produced zero training signals. Validation produced only one bullish signal
+because 87 of 139 sessions lacked a complete cross-section and 43 more still
+lacked 60 complete prior residuals.
+
+The single validation signal won 7.79 net basis points, which is meaningless at
+this sample size. No bootstrap or options implementation was run.
+
+All 13 cache files end May 25, 2026; nothing from the May 26 through August 19
+holdout was requested. This is a data rejection, not evidence against the
+lead-lag mechanism. Any sparse-data fallback must be specified separately
+before reusing development outcomes.
+
+## Reproduce the rejected run
+
+```bash
+floor-constituent-lead-research \
+  --start 2024-02-01 \
+  --oos-start 2026-05-26 \
+  --oos-end 2026-08-19 \
+  --cache-dir state/constituent-lead-cache \
+  --report-out state/constituent-lead-report.json
+```
