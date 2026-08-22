@@ -1,6 +1,7 @@
 # SPY 0DTE intraday surface-butterfly research
 
-Status: **preregistered before strategy-specific intraday option data is fetched**.
+Status: **passed the locked development screen; execution-sensitive paper
+candidate only; final holdout remains sealed**.
 
 This experiment tests whether the 11:00 local-surface result is present across
 the regular session. It is a new hypothesis, not a reinterpretation of the
@@ -38,3 +39,62 @@ choose or suppress an hour after seeing the result.
 Alpaca Basic historical one-minute option trade bars are not synchronized
 executable quotes. This remains a rejection screen: apparent intraday parity
 gaps may be stale-print artifacts, and passing cannot authorize live money.
+
+## Result
+
+All 578 development sessions were evaluated. The strategy-specific cache ends
+on May 22, 2026; its audit found no option file from the final 60-session May 26
+through August 19 holdout.
+
+| Split | Trades | Calls / puts | Average P&L | Profit factor | Max drawdown |
+|---|---:|---:|---:|---:|---:|
+| Training | 427 | 182 / 245 | +$4.22 | 4.5521 | -$41.00 |
+| Validation | 145 | 58 / 87 | +$3.99 | 3.4744 | -$33.80 |
+| Training stress | 427 | 180 / 247 | +$2.58 | 2.4207 | -$48.00 |
+| Validation stress | 145 | 53 / 92 | +$2.51 | 2.2491 | -$49.40 |
+
+The locked development screen passed. The validation win rate was 55.17%, so
+the modeled result came from payoff size rather than an implausibly high win
+rate. The deterministic 10,000-path moving-block bootstrap estimated median
+252-trade P&L of $1,044.60 and a 5th–95th percentile range of $813.60 to
+$1,284.60. These are trade-bar model outputs, not live forecasts.
+
+The first qualifying scan dominated selection:
+
+| Entry | Training | Validation |
+|---|---:|---:|
+| 10:00 | 353 | 114 |
+| 11:00 | 50 | 24 |
+| 12:00 | 16 | 4 |
+| 13:00 | 3 | 2 |
+| 14:00 | 5 | 1 |
+
+This is therefore mostly a 10:00 strategy, not evidence that every hour is
+equally attractive.
+
+## Post-result fill sensitivity
+
+Additional adverse-fill levels were evaluated without changing the locked
+pass. Cost is per contract unit at both entry and exit.
+
+| Cost | Training trades / avg / PF | Validation trades / avg / PF |
+|---:|---:|---:|
+| $0.02 | 425 / +$0.97 / 1.4797 | 144 / +$0.90 / 1.4289 |
+| $0.03 | 398 / -$0.65 / 0.7528 | 140 / -$1.01 / 0.6590 |
+| $0.05 | 291 / -$1.95 / 0.3717 | 112 / -$1.91 / 0.3618 |
+
+The apparent edge disappears between two and three cents of adverse fill per
+contract unit. Combined with nonsynchronous trade bars, that prevents a live
+promotion. Current executable quotes and atomic paper fills remain the next
+gate; the historical holdout stays closed.
+
+## Reproduce
+
+```bash
+floor-intraday-surface-research \
+  --start 2024-02-01 \
+  --end 2026-08-19 \
+  --oos-start 2026-05-26 \
+  --cache-dir state/intraday-surface-butterfly-cache \
+  --report-out state/intraday-surface-butterfly-report.json
+```

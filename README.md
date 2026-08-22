@@ -235,6 +235,14 @@ Its separate `probe-now` command can test paper-order mechanics from 09:45 to
 14:00 ET without contaminating the locked 11:00 forward cohort; those events
 are isolated and explicitly excluded from alpha evaluation.
 
+An independently preregistered intraday backtest scanned 10:00 through 14:00
+hourly and took the first qualifier. It passed development: 427 training trades
+averaged +$4.22 (PF 4.55), and 145 validation trades averaged +$3.99 (PF 3.47).
+The doubled-friction validation remained +$2.51, but a post-result three-cent
+per-unit fill penalty turned validation negative at -$1.01. Most entries were
+at 10:00. This supports paper execution testing, not live deployment. See
+[the intraday surface ledger](docs/INTRADAY_SURFACE_BUTTERFLY_RESEARCH.md).
+
 The default `TAKE_PROFIT_FRACTION=none` holds until the spread stop or hard
 close. `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry
 after a stop. You can raise it to three to reproduce the draft circuit breaker,
