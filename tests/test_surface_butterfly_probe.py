@@ -230,6 +230,10 @@ def test_runner_records_fill_noon_markout_exit_and_signed_pnl(tmp_path):
     assert summary["filled"] == 1
     assert summary["exits"] == 1
     assert summary["gross_pnl"] == "6.00"
+    assert summary["modeled_fees"] == "0.20"
+    assert summary["modeled_net_pnl"] == "5.80"
+    assert summary["modeled_average_pnl"] == "5.80"
+    assert summary["average_adverse_fill_per_unit"] == "0.0000"
 
 
 def test_mechanics_probe_can_enter_outside_locked_window_and_labels_events(tmp_path):
@@ -279,3 +283,80 @@ def test_runner_refuses_live_or_unconfirmed_configuration(tmp_path):
         ).validate()
     with pytest.raises(SurfaceProbeError, match="submission blocked"):
         replace(config, probe_confirmed=False).authorize_orders()
+
+
+def intraday_config(tmp_path: Path) -> SurfaceProbeConfig:
+    config = probe_config(tmp_path).as_intraday_forward()
+    return replace(
+        config,
+        state_path=tmp_path / "intraday-state.json",
+        journal_path=tmp_path / "intraday-events.jsonl",
+    )
+
+
+def test_intraday_forward_waits_after_no_signal_then_takes_next_hour(tmp_path):
+    ten = datetime(2026, 8, 21, 10, 0, tzinfo=ET)
+    client = FakeClient(ten)
+    no_gap = candidate_quotes(ten)
+    for suffix in ("99", "100", "101"):
+        no_gap[f"SPY-P-{suffix}"] = no_gap[f"SPY-C-{suffix}"]
+    client.quotes = no_gap
+    runner = SurfaceProbeRunner(intraday_config(tmp_path), client)
+
+    runner.tick(ten)
+
+    state = runner.store.load(DAY)
+    assert state.phase == "idle"
+    assert state.attempted_slots == ["10:00"]
+    assert client.submissions == []
+
+    eleven = ten.replace(hour=11)
+    client.now = eleven
+    client.quotes = candidate_quotes(eleven)
+    runner.tick(eleven)
+
+    state = runner.store.load(DAY)
+    assert state.phase == "entry_pending"
+    assert state.signal_slot == "11:00"
+    assert state.attempted_slots == ["10:00", "11:00"]
+    assert len(client.submissions) == 1
+    assert client.submissions[0]["client_order_id"].startswith("surface-intraday-")
+    assert '"cohort": "intraday_forward"' in runner.config.journal_path.read_text()
+
+
+def test_intraday_forward_records_missed_slot_without_backfill(tmp_path):
+    now = datetime(2026, 8, 21, 10, 30, tzinfo=ET)
+    client = FakeClient(now)
+    runner = SurfaceProbeRunner(intraday_config(tmp_path), client)
+
+    runner.tick(now)
+
+    state = runner.store.load(DAY)
+    assert state.phase == "idle"
+    assert state.attempted_slots == ["10:00"]
+    assert client.submissions == []
+
+
+def test_intraday_forward_fill_exits_one_hour_later(tmp_path):
+    entered = datetime(2026, 8, 21, 10, 0, tzinfo=ET)
+    client = FakeClient(entered)
+    runner = SurfaceProbeRunner(intraday_config(tmp_path), client)
+    runner.tick(entered)
+    client.orders["order-1"].update(
+        status="filled", filled_qty="1", filled_avg_price="0.05"
+    )
+
+    filled = entered + timedelta(seconds=5)
+    client.now = filled
+    client.quotes = candidate_quotes(filled)
+    runner.tick(filled)
+    state = runner.store.load(DAY)
+    assert state.scheduled_exit_at == "2026-08-21T11:00:05-04:00"
+
+    exit_at = filled + timedelta(hours=1)
+    client.now = exit_at
+    client.quotes = candidate_quotes(exit_at)
+    runner.tick(exit_at)
+
+    assert len(client.submissions) == 2
+    assert client.submissions[-1]["price"] is None

@@ -243,6 +243,12 @@ per-unit fill penalty turned validation negative at -$1.01. Most entries were
 at 10:00. This supports paper execution testing, not live deployment. See
 [the intraday surface ledger](docs/INTRADAY_SURFACE_BUTTERFLY_RESEARCH.md).
 
+The matching paper-forward runner is `floor-surface-butterfly-probe
+intraday-run`. It observes the five locked hourly slots, stops at the first
+qualifier, and reports actual signed fill slippage per contract unit plus
+modeled net P&L. See
+[the intraday forward protocol](docs/INTRADAY_SURFACE_FORWARD.md).
+
 The default `TAKE_PROFIT_FRACTION=none` holds until the spread stop or hard
 close. `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry
 after a stop. You can raise it to three to reproduce the draft circuit breaker,

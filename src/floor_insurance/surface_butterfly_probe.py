@@ -17,6 +17,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from .alpaca import AlpacaClient, AlpacaError
+from .intraday_surface_research import ENTRY_TIMES
 from .models import Contract, Quote
 from .notify import Notifier
 from .probe import PaperProbeJournal
@@ -25,6 +26,7 @@ from .surface_butterfly_research import CENTER_OFFSETS
 LOG = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
 CENT = Decimal("0.01")
+MODELED_ROUND_TRIP_FEES = Decimal("0.20")
 TERMINAL_FAILURES = {"canceled", "expired", "rejected", "replaced", "suspended"}
 
 
@@ -101,8 +103,10 @@ class SurfaceProbeConfig:
     telegram_token: str | None = None
     telegram_chat_id: str | None = None
     mechanics_only: bool = False
+    intraday_forward: bool = False
     mechanics_entry_start: time = time(9, 45)
     mechanics_entry_cutoff: time = time(14, 0)
+    intraday_window_seconds: int = 60
 
     @classmethod
     def from_env(cls, *, require_credentials: bool = True) -> SurfaceProbeConfig:
@@ -165,7 +169,11 @@ class SurfaceProbeConfig:
             raise SurfaceProbeError("STOCK_FEED must be iex or sip")
         if self.options_feed not in {"indicative", "opra"}:
             raise SurfaceProbeError("OPTIONS_FEED must be indicative or opra")
-        if min(self.request_timeout_seconds, self.poll_seconds) < 1:
+        if min(
+            self.request_timeout_seconds,
+            self.poll_seconds,
+            self.intraday_window_seconds,
+        ) < 1:
             raise SurfaceProbeError("timeouts and polling interval must be positive")
         if self.state_path == self.journal_path:
             raise SurfaceProbeError("surface probe state and journal paths must differ")
@@ -192,6 +200,24 @@ class SurfaceProbeConfig:
                 os.getenv(
                     "SURFACE_MECHANICS_LOG_PATH",
                     "state/surface_butterfly_mechanics_events.jsonl",
+                )
+            ),
+        )
+
+    def as_intraday_forward(self) -> SurfaceProbeConfig:
+        return replace(
+            self,
+            intraday_forward=True,
+            state_path=Path(
+                os.getenv(
+                    "INTRADAY_SURFACE_FORWARD_STATE_PATH",
+                    "state/intraday_surface_forward_state.json",
+                )
+            ),
+            journal_path=Path(
+                os.getenv(
+                    "INTRADAY_SURFACE_FORWARD_LOG_PATH",
+                    "state/intraday_surface_forward_events.jsonl",
                 )
             ),
         )
@@ -501,6 +527,8 @@ class SurfaceProbeState:
     exit_order_id: str | None = None
     exit_submitted_at: str | None = None
     exit_reason: str | None = None
+    attempted_slots: list[str] = field(default_factory=list)
+    signal_slot: str | None = None
     last_event: str = "fresh day"
 
 
@@ -554,8 +582,20 @@ class SurfaceProbeRunner:
         self.journal = PaperProbeJournal(config.journal_path)
 
     def _note(self, event: str, now: datetime, **details: Any) -> None:
-        cohort = "mechanics_only" if self.config.mechanics_only else "locked_1100"
+        if self.config.mechanics_only:
+            cohort = "mechanics_only"
+        elif self.config.intraday_forward:
+            cohort = "intraday_forward"
+        else:
+            cohort = "locked_1100"
         self.journal.write(event, now, cohort=cohort, **details)
+
+    def _client_namespace(self) -> str:
+        if self.config.mechanics_only:
+            return "surface-mechanics"
+        if self.config.intraday_forward:
+            return "surface-intraday"
+        return "surface-1100"
 
     def _submit_or_reconcile(
         self,
@@ -594,9 +634,12 @@ class SurfaceProbeRunner:
             else:
                 exit_at = datetime.combine(now.date(), self.config.exit_time, ET)
             if now >= exit_at:
-                reason = (
-                    "mechanics_one_hour" if self.config.mechanics_only else "noon_markout"
-                )
+                if self.config.mechanics_only:
+                    reason = "mechanics_one_hour"
+                elif self.config.intraday_forward:
+                    reason = "intraday_one_hour"
+                else:
+                    reason = "noon_markout"
                 self._submit_exit(state, now, reason)
         elif state.phase == "exit_pending":
             self._manage_exit(state, now)
@@ -607,6 +650,10 @@ class SurfaceProbeRunner:
                     raise SurfaceProbeError(
                         "probe-now requires an open regular options session"
                     )
+                return self.config.poll_seconds
+            if self.config.intraday_forward:
+                self._tick_intraday_idle(state, now)
+                self.store.save(state)
                 return self.config.poll_seconds
             if self.config.mechanics_only:
                 if not (
@@ -632,15 +679,53 @@ class SurfaceProbeRunner:
         self.store.save(state)
         return self.config.poll_seconds
 
-    def _enter(self, state: SurfaceProbeState, now: datetime) -> None:
+    def _tick_intraday_idle(
+        self, state: SurfaceProbeState, now: datetime
+    ) -> None:
+        last_slot = ENTRY_TIMES[-1].strftime("%H:%M")
+        for slot in ENTRY_TIMES:
+            label = slot.strftime("%H:%M")
+            if label in state.attempted_slots:
+                continue
+            starts_at = datetime.combine(now.date(), slot, ET)
+            ends_at = starts_at + timedelta(
+                seconds=self.config.intraday_window_seconds
+            )
+            if now > ends_at:
+                state.attempted_slots.append(label)
+                state.last_event = f"intraday slot {label} missed"
+                self._note("surface_probe_slot_missed", now, slot=label)
+                continue
+            if now < starts_at:
+                return
+            state.attempted_slots.append(label)
+            state.signal_slot = label
+            state.last_event = f"intraday slot {label} observing"
+            self.store.save(state)
+            self._enter(state, now, continue_after_no_candidate=True)
+            if state.phase == "idle" and label == last_slot:
+                state.phase = "done"
+                state.last_event = "no intraday candidate"
+            return
+        state.phase = "done"
+        state.last_event = "all intraday slots completed"
+
+    def _enter(
+        self,
+        state: SurfaceProbeState,
+        now: datetime,
+        *,
+        continue_after_no_candidate: bool = False,
+    ) -> None:
         result = scan_surface(self.client, self.config, now)
         candidate = result.candidate
         if candidate is None:
-            state.phase = "done"
+            state.phase = "idle" if continue_after_no_candidate else "done"
             state.last_event = result.reason
             self._note(
                 "surface_probe_no_candidate",
                 now,
+                slot=state.signal_slot,
                 underlying=result.underlying,
                 evaluated_centers=result.candidate_count,
                 reason=result.reason,
@@ -650,13 +735,17 @@ class SurfaceProbeRunner:
         self._note(
             "surface_probe_candidate",
             now,
+            slot=state.signal_slot,
             underlying=result.underlying,
             underlying_at=result.underlying_at,
             **details,
         )
         state.candidate = _json_value(details)
         state.symbols = list(candidate.symbols)
-        state.entry_client_id = f"surface-{state.trading_date.replace('-', '')}-entry"
+        state.entry_client_id = (
+            f"{self._client_namespace()}-"
+            f"{state.trading_date.replace('-', '')}-entry"
+        )
         state.entry_submitted_at = now.isoformat()
         state.phase = "entry_pending"
         state.last_event = "entry submission prepared"
@@ -707,7 +796,7 @@ class SurfaceProbeRunner:
             state.entry_signed_price = str(signed_price)
             state.entry_filled_at = now.isoformat()
             regular_exit = datetime.combine(now.date(), self.config.exit_time, ET)
-            if self.config.mechanics_only:
+            if self.config.mechanics_only or self.config.intraday_forward:
                 hard_close = datetime.combine(
                     now.date(), self.config.hard_close_time, ET
                 )
@@ -771,7 +860,10 @@ class SurfaceProbeRunner:
             signed_close_mark=mark,
             reason=reason,
         )
-        state.exit_client_id = f"surface-{state.trading_date.replace('-', '')}-exit"
+        state.exit_client_id = (
+            f"{self._client_namespace()}-"
+            f"{state.trading_date.replace('-', '')}-exit"
+        )
         state.exit_submitted_at = now.isoformat()
         state.exit_reason = reason
         state.phase = "exit_pending"
@@ -880,6 +972,8 @@ def scan_report(result: ScanResult) -> dict[str, Any]:
 def journal_summary(path: Path) -> dict[str, Any]:
     counts: dict[str, int] = {}
     pnls: list[Decimal] = []
+    submitted_limits: dict[str, Decimal] = {}
+    adverse_fills: list[Decimal] = []
     if path.exists():
         with path.open(encoding="utf-8") as handle:
             for line_number, line in enumerate(handle, start=1):
@@ -891,8 +985,20 @@ def journal_summary(path: Path) -> dict[str, Any]:
                     ) from exc
                 event = str(item.get("event", "unknown"))
                 counts[event] = counts.get(event, 0) + 1
+                if event == "surface_probe_submitted":
+                    submitted_limits[str(item["order_id"])] = Decimal(
+                        str(item["limit_price"])
+                    )
+                if event == "surface_probe_filled":
+                    limit = submitted_limits.get(str(item["order_id"]))
+                    if limit is not None:
+                        fill = Decimal(str(item["signed_entry_price"]))
+                        adverse_fills.append((fill - limit) / Decimal("4"))
                 if event == "surface_probe_exit_filled":
                     pnls.append(Decimal(str(item["gross_pnl"])))
+    net_pnls = [pnl - MODELED_ROUND_TRIP_FEES for pnl in pnls]
+    wins = sum((pnl for pnl in net_pnls if pnl > 0), Decimal("0"))
+    losses = abs(sum((pnl for pnl in net_pnls if pnl < 0), Decimal("0")))
     return {
         "journal": str(path),
         "events": counts,
@@ -902,6 +1008,28 @@ def journal_summary(path: Path) -> dict[str, Any]:
         "unfilled": counts.get("surface_probe_unfilled", 0),
         "exits": counts.get("surface_probe_exit_filled", 0),
         "gross_pnl": str(sum(pnls, Decimal("0")).quantize(CENT)),
+        "modeled_fees": str(
+            (MODELED_ROUND_TRIP_FEES * Decimal(len(pnls))).quantize(CENT)
+        ),
+        "modeled_net_pnl": str(sum(net_pnls, Decimal("0")).quantize(CENT)),
+        "modeled_average_pnl": (
+            str((sum(net_pnls, Decimal("0")) / Decimal(len(net_pnls))).quantize(CENT))
+            if net_pnls
+            else None
+        ),
+        "modeled_profit_factor": (
+            str((wins / losses).quantize(Decimal("0.0001"))) if losses else None
+        ),
+        "average_adverse_fill_per_unit": (
+            str(
+                (
+                    sum(adverse_fills, Decimal("0"))
+                    / Decimal(len(adverse_fills))
+                ).quantize(Decimal("0.0001"))
+            )
+            if adverse_fills
+            else None
+        ),
     }
 
 
@@ -920,6 +1048,10 @@ def _parser() -> argparse.ArgumentParser:
             "report",
             "mechanics-state",
             "mechanics-report",
+            "intraday-run",
+            "intraday-once",
+            "intraday-state",
+            "intraday-report",
         ),
         default="run",
     )
@@ -935,14 +1067,28 @@ def main() -> int:
     try:
         config = SurfaceProbeConfig.from_env(
             require_credentials=args.command
-            not in {"state", "report", "mechanics-state", "mechanics-report"}
+            not in {
+                "state",
+                "report",
+                "mechanics-state",
+                "mechanics-report",
+                "intraday-state",
+                "intraday-report",
+            }
         )
         if args.command in {"probe-now", "mechanics-state", "mechanics-report"}:
             config = config.as_mechanics_only()
-        if args.command in {"report", "mechanics-report"}:
+        if args.command in {
+            "intraday-run",
+            "intraday-once",
+            "intraday-state",
+            "intraday-report",
+        }:
+            config = config.as_intraday_forward()
+        if args.command in {"report", "mechanics-report", "intraday-report"}:
             print(json.dumps(journal_summary(config.journal_path), indent=2))
             return 0
-        if args.command in {"state", "mechanics-state"}:
+        if args.command in {"state", "mechanics-state", "intraday-state"}:
             state = SurfaceStateStore(config.state_path).load(
                 datetime.now(ET).date().isoformat()
             )
@@ -984,7 +1130,7 @@ def main() -> int:
             )
             return 0 if eligible else 1
         runner = SurfaceProbeRunner(config, client)
-        if args.command == "once":
+        if args.command in {"once", "intraday-once"}:
             runner.tick()
             return 0
         if args.command == "probe-now":

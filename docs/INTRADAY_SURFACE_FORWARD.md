@@ -44,3 +44,26 @@ atomic paper fills. Before opening the sealed historical holdout, require:
 
 Paper fills are simulated and cannot establish live fill quality. Passing this
 gate would authorize opening the historical holdout once, not live trading.
+
+## Run
+
+Start the persistent process before 10:00 ET using paper credentials:
+
+```bash
+set -a; source .env; set +a
+SURFACE_BUTTERFLY_PAPER_PROBE=true \
+  .venv/bin/floor-surface-butterfly-probe intraday-run
+```
+
+For a scheduler or service that invokes one tick at a time, use
+`intraday-once`. Read-only inspection commands are:
+
+```bash
+.venv/bin/floor-surface-butterfly-probe intraday-state
+.venv/bin/floor-surface-butterfly-probe intraday-report
+tail -f state/intraday_surface_forward_events.jsonl
+```
+
+Do not run the older locked-11:00 or mechanics cohorts simultaneously. Each
+cohort nevertheless has a distinct broker client-order-ID namespace, state
+file, and journal to prevent accidental reconciliation collisions.
