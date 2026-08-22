@@ -24,4 +24,5 @@ state/constituent-lead-cache/
 state/implied-condor-cache/
 state/conformal-condor-cache/
 state/surface-butterfly-cache/
+state/intraday-surface-butterfly-cache/
 !state/.gitkeep
