@@ -94,9 +94,15 @@ are largest for path-dependent contracts. It costs nothing extra here.
   the run and blocks any reported comparison.
 - Benchmark: Black–Scholes delta hedge on the same grid with `r = q = 0`,
   `σ` = prior session's VIX1D close divided by 100, and time to expiry measured
-  to 16:00 ET. Initial cash is the Black–Scholes price at 10:00 under the same
-  `σ`. The Asian benchmark uses the closed-form geometric-average delta and
-  price from the paper's own Appendix C.2, under the same `σ`.
+  to **15:45 ET**. Initial cash is the Black–Scholes price at 10:00 under the
+  same `σ`. The Asian benchmark uses the exact discrete-grid geometric-average
+  price and delta under the same `σ`.
+- Annualization is not uniquely determined for an intraday horizon, so both a
+  trading-time convention (252 × 390 minutes per year) and a calendar
+  convention (365 days) are evaluated. The benchmark is credited with whichever
+  produces the *lower* error, so the comparison is conservative against the
+  signature hedge.
+
 - Costs: charge 1 basis point of traded notional on `|θ_{j+1} − θ_j|` at every
   rebalance, and on the initial and final position, for both methods
   identically. A 2 basis point stress is evaluated as a separate declared
@@ -105,6 +111,29 @@ are largest for path-dependent contracts. It costs nothing extra here.
 - Record maximum absolute position and mean per-rebalance turnover for both
   methods. A hedge that replicates well by demanding large leverage is not
   usable in this account regardless of its error.
+
+### Corrections made before the first run
+
+Recorded rather than silently applied. No data had been fetched.
+
+1. Time to expiry was originally written as 16:00 ET while the payoff is
+   defined at 15:45. The target contract expires at the end of the hedging
+   window, so 15:45 is correct and 16:00 was an error.
+2. The Asian benchmark originally cited the paper's Appendix C.2 continuous-
+   averaging formula. Because the payoff here is a discrete grid average, the
+   exact discrete-grid lognormal price and delta are derived and used instead.
+   This makes the benchmark stronger, not weaker.
+3. The two annualization conventions above were unspecified. Both are now
+   evaluated, with the better one credited to the benchmark.
+
+### Declared post-lock diagnostic
+
+Reported alongside the gated numbers and clearly labelled as a diagnostic, not
+a gate. The benchmark's initial cash is replaced by the training-mean residual
+`p0 = mean(payoff − hedge gain)`, which is the best constant cash the benchmark
+could have been given. This isolates whether any signature advantage is a
+better hedge or merely a better initial cash level — a control the paper omits.
+It can only make the signature comparison look worse, never better.
 
 ## Metric
 
