@@ -25,7 +25,7 @@ from pathlib import Path
 
 from .config import Config
 from .directional import PriceBar
-from .directional_backtest import HistoricalData, research_splits
+from .directional_backtest import HistoricalData
 from .volatility import VolatilityHistory
 
 GRID_TIMES: tuple[time, ...] = tuple(
@@ -613,6 +613,8 @@ def evaluate(
                 residuals.append(session.payoffs[payoff] - wealth)
             benchmark_cash_fit[convention] = sum(residuals) / len(residuals)
 
+        static_cash = sum(targets) / len(targets)
+
         splits: dict[str, object] = {}
         for split in ("train", "validation"):
             rows = sessions[split]
@@ -674,6 +676,9 @@ def evaluate(
             ]
             splits[split] = {
                 "sessions": len(rows),
+                "unhedged_mae": _milli(
+                    mae([session.payoffs[payoff] - static_cash for session in rows])
+                ),
                 "signature_mae": _milli(mae(signature["base"])),
                 "signature_rmse": _milli(
                     math.sqrt(sum(value**2 for value in signature["base"]) / len(rows))
@@ -792,6 +797,27 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def development_splits(dates: list[str], oos_start: date) -> dict[str, set[str]]:
+    """Chronological 75/25 split of the development window.
+
+    This deliberately does not use ``research_splits``. That helper derives the
+    holdout from dates already fetched, which would require downloading the
+    sealed bars in order to name them. Here the underlying bars *are* the
+    strategy data, so the sealed range is never requested at all and the split
+    is computed from the development sessions only. Any date at or beyond the
+    holdout boundary is a fetch error, not a held-out sample.
+    """
+
+    if any(date.fromisoformat(value) >= oos_start for value in dates):
+        raise SystemExit(
+            "sealed sessions were fetched; the holdout boundary was violated"
+        )
+    if len(dates) < 10:
+        raise SystemExit("at least 10 development sessions are required")
+    train_end = max(1, int(len(dates) * 0.75))
+    return {"train": set(dates[:train_end]), "validation": set(dates[train_end:])}
+
+
 def main() -> int:
     args = _parser().parse_args()
     if args.end >= args.oos_start:
@@ -803,20 +829,12 @@ def main() -> int:
     volatility = VolatilityHistory.load(args.cache_dir)
     bars = data.stock_sessions(args.start, args.end, "SPY")
     dates = sorted(bars)
-    splits = research_splits(dates, args.oos_start)
+    splits = development_splits(dates, args.oos_start)
 
     sessions: dict[str, list[Session]] = {"train": [], "validation": []}
     excluded: list[dict[str, str]] = []
     for trading_date in dates:
-        split = (
-            "train"
-            if trading_date in splits["train"]
-            else "validation"
-            if trading_date in splits["validation"]
-            else None
-        )
-        if split is None:
-            continue
+        split = "train" if trading_date in splits["train"] else "validation"
         day = date.fromisoformat(trading_date)
         previous = volatility.previous_session(day)
         reading = (
@@ -840,7 +858,6 @@ def main() -> int:
     )
     primary = evaluate(sessions, PRIMARY_ORDER)
     secondary = evaluate(sessions, SECONDARY_ORDER)
-    locked = sorted(splits["out_of_sample"])
     report = {
         "acceptance_rule": ACCEPTANCE_RULE,
         "data_limitation": DATA_LIMITATION,
@@ -854,12 +871,20 @@ def main() -> int:
             "validation": len(sessions["validation"]),
             "excluded": excluded,
         },
+        "oos_revealed": False,
         "seal": {
             "requested_end": args.end.isoformat(),
             "oos_start": args.oos_start.isoformat(),
-            "oos_sessions_requested": len(locked),
+            "last_development_session": dates[-1],
+            "oos_sessions_fetched": 0,
             "cache_files": sorted(
                 path.name for path in args.cache_dir.glob("spy-*.json")
+            ),
+            "note": (
+                "The sealed range was never requested, so no holdout bar exists "
+                "in this cache. SPY minute bars for that range do exist in other "
+                "experiments' caches in this repository, so the seal is "
+                "procedural rather than physical."
             ),
         },
         "primary": primary,

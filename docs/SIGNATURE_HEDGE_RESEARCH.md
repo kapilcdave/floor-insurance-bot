@@ -1,7 +1,8 @@
 # SPY 0DTE Itô-signature replication research
 
-Status: **protocol locked before any strategy-specific data is fetched. No
-simulator exists yet and no result has been read.**
+Status: **development failed and this line is closed.** The signature hedge was
+45–74% worse than a plain Black–Scholes delta hedge on every payoff and split.
+The holdout was never opened. See the result section.
 
 This tests one narrow claim from Guo, Wang, and Zhang, *Tradable Itô
 Signatures: A Model-Free, Interpretable Framework for Dynamic Hedging*
@@ -205,7 +206,9 @@ work. A negative result is the expected outcome and is recorded as such.
   delta backed out of each contract's own observed price. It is a weaker
   benchmark in one direction and a cleaner one in another, since it cannot peek
   at the contract being replicated.
-- Roughly 470 training and 155 validation sessions, against the paper's 32,768
+- Roughly 470 training and 155 validation sessions (**this estimate was wrong;
+  the run yielded 284 and 142 because of missing feed minutes, see the result
+  section**), against the paper's 32,768
   simulated training paths. This is the small-sample regime in which the paper
   claims an advantage, which is the point of testing it, but power is limited.
 - A single coefficient vector spans a two-year training window that includes
@@ -223,13 +226,11 @@ work. A negative result is the expected outcome and is recorded as such.
 - <https://www.cboe.com/tradable_products/vix/vix_historical_data/>
 - <https://docs.alpaca.markets/us/docs/historical-stock-data>
 
-## Planned interface
-
-Not implemented yet. Reserved names, so the eventual simulator cannot quietly
-reuse another experiment's cache:
+## Reproduce
 
 ```bash
-floor-signature-hedge-research \
+set -a; source .env; set +a
+.venv/bin/floor-signature-hedge-research \
   --start 2024-02-01 \
   --end 2026-05-22 \
   --oos-start 2026-05-26 \
@@ -237,6 +238,125 @@ floor-signature-hedge-research \
   --report-out state/signature-hedge-report.json
 ```
 
+Runs in about 26 seconds. The sealed range is never requested; the runner exits
+with an error if any fetched session falls at or beyond the holdout boundary.
+
 ## Result
 
-Not run.
+**Development failed. The signature hedge is decisively worse than a plain
+Black–Scholes delta hedge on every payoff, on both splits, at both truncation
+orders, under both cost levels.** No parameter was changed after the first run.
+The holdout was never opened and is not authorized.
+
+Mean absolute terminal error ×10⁻³, order 3, after 1 bp costs. "Unhedged" holds
+the training-mean payoff in cash and never trades, as a floor for reference.
+
+| Payoff | Split | Unhedged | Signature | Benchmark | Change |
+| --- | --- | --- | --- | --- | --- |
+| Call | train (284) | 2.917 | 1.662 | **1.147** | +44.9% worse |
+| Call | validation (142) | 2.675 | 1.545 | **1.016** | +52.2% worse |
+| Put | train | 3.414 | 1.981 | **1.166** | +69.8% worse |
+| Put | validation | 2.909 | 1.576 | **1.012** | +55.8% worse |
+| Asian | train | 1.867 | 1.219 | **0.706** | +72.7% worse |
+| Asian | validation | 1.809 | 1.148 | **0.661** | +73.7% worse |
+
+The Asian call — the contract the paper claims the largest gain on — is the
+worst case here, not the best.
+
+Every gate outcome:
+
+| Gate | Result |
+| --- | --- |
+| ≥300 training sessions | **fail**, 284 |
+| ≥100 validation sessions | pass, 142 |
+| Theorem 1 identity within `1e-9` | pass, worst error `6.9e-18` |
+| Lower error than benchmark, 6 payoff × split cells | **fail, 0 of 6** |
+| Asian validation error reduced ≥10% | **fail**, 73.7% worse |
+| Still better under 2 bp stress | **fail** |
+| Validation `max|θ| ≤ 3` | pass, 0.93 worst |
+| Mean turnover ≤ 0.5 | pass, 0.037 worst |
+
+Order 4 is no better: validation errors of 1.518, 1.562, and 1.155 against the
+same benchmarks, and its training `max|θ|` of 3.55 would breach the position cap
+that order 3 satisfies. Extra coordinates buy nothing.
+
+The paired sign test rejects at every cell, in the benchmark's favor: the
+signature hedge wins 33.8% of validation sessions on the call, 39.4% on the put,
+and 31.0% on the Asian. The deterministic block bootstrap puts the probability
+that the signature hedge has the lower mean absolute error at **0.0000 in all
+twelve cells**, with 5th-percentile mean differences of +0.29e-3 or worse.
+
+### What the basis does and does not do
+
+The signature basis is not broken, and this is not an implementation failure:
+
+- Theorem 1 holds numerically to `6.9e-18`, five orders of magnitude inside the
+  preregistered tolerance. The fitted coefficients really are being converted
+  into a self-financing strategy whose gain equals the linear prediction.
+- The Lasso intercept independently recovers an option premium. On a synthetic
+  GBM control it reproduced the Black–Scholes price the benchmark computes from
+  the same `σ` to three digits, without ever seeing a pricing formula.
+- The hedge beats doing nothing by a wide margin on every cell, so the
+  coordinates do carry genuine hedging information. It captures roughly 40% of
+  the achievable error reduction where delta captures about 62%.
+- Costs are irrelevant to the verdict. Signature turnover of 0.024–0.039 is
+  *below* the benchmark's 0.060–0.107, so doubling costs slightly *narrows* the
+  gap rather than widening it. The signature hedge is losing because it hedges
+  too little, not because it churns.
+
+The fits are extremely sparse — 3 or 4 active coordinates of 11 — and dominated
+by a single third-order term with a large coefficient (`(t,S,S)` at 27.4 for the
+call, `(S,t,S)` at 34.2 for the put) because order-3 coordinates are numerically
+tiny. Cross-validation is choosing heavy shrinkage, which is the correct
+response to a basis whose out-of-sample signal is weak.
+
+The declared post-lock diagnostic confirms the loss is not a cash-level
+artifact. Granting the benchmark its best constant initial cash from the
+training set *strengthens* it further on validation, to 0.938 for the call and
+0.643 for the Asian, widening the deficit to 64.7% and 78.5%.
+
+### The result is negative, and the sample-size gate also failed
+
+Both must be recorded. The training count of 284 fell short of the
+preregistered 300 because one-minute SPY bars from the IEX feed are missing
+scattered minutes: 152 of 578 sessions lack at least one of the 24 grid bars,
+86 of them missing exactly one. The gaps cluster in the low-volume early
+afternoon — 13:15 is absent 33 times, 13:45 29 times — against only 3 absences
+at 10:00. The locked rule excludes those sessions and never fills forward, so
+they are gone. My preregistered projection of "roughly 470 training sessions"
+was simply wrong; I had not checked feed completeness before locking.
+
+Two honest consequences:
+
+1. The count gate is failed on data availability, independent of performance.
+   Raising it retroactively, or filling gaps forward to recover sessions, would
+   be a post-hoc parameter change and was not done.
+2. The surviving sample is biased toward higher-volume sessions, since a missing
+   minute means no IEX trade printed. That biases *both* methods identically and
+   cannot explain a one-sided 45–74% deficit, but it does mean these error
+   levels are not representative of quiet sessions.
+
+The performance verdict does not depend on the shortfall. A 45–74% deficit with
+bootstrap probability 0.0000 in twelve of twelve cells is not a power problem,
+and 142 validation sessions cleared their own gate.
+
+### Verdict against the stated prior
+
+This confirms the prior recorded before any data was read. The paper's own
+Appendix D.6 shows the unweighted Itô-signature hedge losing badly to the
+benchmark on exotics — LassoSig at 10.55 against 6.435 for Monte Carlo on Asian
+calls — with nearly all headline improvement arriving only from
+signature-kernel path-similarity weighting tuned on a development period. The
+ratio found here, 1.148 against 0.661, is close to the paper's own 10.55
+against 6.435. **The most direct reading is that this replicates the paper's
+Appendix rather than contradicting its Tables**: the Itô-signature basis alone
+does not hedge competitively, and the paper's advertised result belongs to the
+kernel weighting, not to the basis.
+
+The one follow-up that development success would have authorized — testing
+whether kernel weighting adds anything on top of a working base — is now moot,
+because there is no working base to add it to. Testing kernel weighting from
+here would mean tuning a bandwidth until a 45–74% deficit inverts, which is
+curve-fitting, not replication. **This line of research is closed.** Nothing
+here authorizes opening the holdout, connecting the order engine, or risking
+money.

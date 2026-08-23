@@ -249,6 +249,20 @@ qualifier, and reports actual signed fill slippage per contract unit plus
 modeled net P&L. See
 [the intraday forward protocol](docs/INTRADAY_SURFACE_FORWARD.md).
 
+A separately preregistered study tested the tradable-Itô-signature hedging
+framework of arXiv:2608.18120 on SPY 0DTE payoffs. It failed development
+decisively: the signature hedge was 45% to 74% worse than a plain
+Black–Scholes delta hedge on all three payoffs, both splits, both truncation
+orders, and both cost levels, with a bootstrap probability of 0.0000 that it had
+the lower error in any of twelve cells. The paper's Theorem 1 held numerically
+to `6.9e-18` and the fitted intercept independently recovered the option
+premium, so the basis works as advertised — it simply hedges worse, at *lower*
+turnover than delta. The result matches the paper's own Appendix D.6 rather than
+its headline tables, which indicates the advertised gain belongs to the
+kernel-weighting layer and not to the signature basis. This line is closed and
+the sealed holdout was never opened. See
+[the signature hedge ledger](docs/SIGNATURE_HEDGE_RESEARCH.md).
+
 The default `TAKE_PROFIT_FRACTION=none` holds until the spread stop or hard
 close. `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry
 after a stop. You can raise it to three to reproduce the draft circuit breaker,
