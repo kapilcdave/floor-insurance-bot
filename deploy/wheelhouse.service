@@ -1,0 +1,23 @@
+[Unit]
+Description=Wheelhouse selective options wheel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=floorbot
+Group=floorbot
+WorkingDirectory=/opt/wheelhouse-options
+EnvironmentFile=/etc/wheelhouse-options.env
+ExecStart=/opt/wheelhouse-options/.venv/bin/wheelhouse run
+Restart=on-failure
+RestartSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/wheelhouse-options
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

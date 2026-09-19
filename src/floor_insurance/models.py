@@ -29,6 +29,17 @@ class Quote:
     timestamp: datetime
 
 
+@dataclass(frozen=True)
+class OptionSnapshot:
+    symbol: str
+    strike: Decimal
+    expiration_date: str
+    option_type: str
+    quote: Quote
+    delta: Decimal
+    implied_volatility: Decimal
+
+
 @dataclass
 class DailyState:
     trading_date: str

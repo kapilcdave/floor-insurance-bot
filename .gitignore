@@ -1,4 +1,6 @@
 .env
+.env.*
+!.env.example
 .venv/
 __pycache__/
 *.py[cod]
@@ -11,6 +13,7 @@ dist/
 state/*.json
 state/*.jsonl
 state/*.csv
+state/*.log
 state/backtest-cache/
 state/atm-trend-cache*/
 state/implied-move-cache/

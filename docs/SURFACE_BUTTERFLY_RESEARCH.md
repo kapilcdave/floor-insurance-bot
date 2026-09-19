@@ -1,7 +1,15 @@
 # SPY 0DTE local-surface butterfly research
 
-Status: **passed the locked development screen; paper execution probe only;
-final holdout remains sealed**.
+Status: **rejected 2026-08-25. Do not trade this.** It passed the locked
+development screen recorded below, and then failed the one control that was never
+run on it: choose the structure from the 11:00 cross-section and pay the 11:01
+print, and +$4.10 per trade becomes -$3.79. The $0.08 parity gap the rule selects
+on decays by $0.07 within a minute, so the gap is one butterfly having last
+printed on the bid while the other last printed on the ask. See
+[the placebo diagnostics](SURFACE_PARITY_DIAGNOSTIC.md#after-the-entry-delay).
+The final holdout was never opened and remains sealed.
+
+Everything below is the original ledger, preserved unedited.
 
 This experiment targets cross-sectional relative value rather than the level or
 direction of volatility. For equally spaced strikes, call and put prices must

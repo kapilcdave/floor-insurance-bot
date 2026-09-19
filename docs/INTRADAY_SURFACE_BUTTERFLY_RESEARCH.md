@@ -1,7 +1,14 @@
 # SPY 0DTE intraday surface-butterfly research
 
-Status: **passed the locked development screen; execution-sensitive paper
-candidate only; final holdout remains sealed**.
+Status: **rejected 2026-08-25. Do not trade this.** The entry-delay control was
+run at each of the five locked hourly slots on this cache. Every slot flips sign
+on both splits: controls of +$3.65 to +$5.71 per trade become -$1.93 to -$4.81
+when the structure is chosen at the slot minute and paid for one minute later.
+Ten out of ten cells. See
+[the placebo diagnostics](SURFACE_PARITY_DIAGNOSTIC.md#the-same-result-at-every-hour).
+The final holdout was never opened and remains sealed.
+
+Everything below is the original ledger, preserved unedited.
 
 This experiment tests whether the 11:00 local-surface result is present across
 the regular session. It is a new hypothesis, not a reinterpretation of the

@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from .config import Config
-from .models import Contract, Quote
+from .models import Contract, OptionSnapshot, Quote
 
 LOG = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class AlpacaClient:
                 "APCA-API-KEY-ID": config.api_key,
                 "APCA-API-SECRET-KEY": config.api_secret,
                 "Accept": "application/json",
-                "User-Agent": "floor-insurance-bot/0.1",
+                "User-Agent": "wheelhouse-options/0.5",
             }
         )
 
@@ -86,6 +86,22 @@ class AlpacaClient:
 
     def account(self) -> dict[str, Any]:
         return self._request("GET", self.config.trading_base_url, "/v2/account")
+
+    def asset(self, symbol: str) -> dict[str, Any]:
+        return self._request(
+            "GET", self.config.trading_base_url, f"/v2/assets/{symbol}"
+        )
+
+    def positions(self) -> list[dict[str, Any]]:
+        return self._request("GET", self.config.trading_base_url, "/v2/positions")
+
+    def open_orders(self) -> list[dict[str, Any]]:
+        return self._request(
+            "GET",
+            self.config.trading_base_url,
+            "/v2/orders",
+            params={"status": "open", "nested": "true", "limit": 500},
+        )
 
     def calendar_day(self, trading_date: str) -> dict[str, Any] | None:
         days = self._request(
@@ -146,10 +162,13 @@ class AlpacaClient:
             if not expiration_date:
                 raise AlpacaError("XSP reference price requires an expiration date")
             return self.synthetic_xsp_price(expiration_date)
+        return self.latest_stock_trade(self.config.symbol)
+
+    def latest_stock_trade(self, symbol: str) -> tuple[Decimal, datetime]:
         data = self._request(
             "GET",
             self.config.data_base_url,
-            f"/v2/stocks/{self.config.symbol}/trades/latest",
+            f"/v2/stocks/{symbol}/trades/latest",
             params={"feed": self.config.stock_feed},
         )
         trade = data["trade"]
@@ -254,6 +273,98 @@ class AlpacaClient:
     def put_contracts(self, expiration_date: str) -> list[Contract]:
         return self.option_contracts(expiration_date, "put")
 
+    def option_contracts_between(
+        self,
+        symbol: str,
+        option_type: str,
+        expiration_date_gte: str,
+        expiration_date_lte: str,
+    ) -> list[Contract]:
+        if option_type not in {"call", "put"}:
+            raise ValueError("option_type must be call or put")
+        params: dict[str, Any] = {
+            "underlying_symbols": symbol,
+            "expiration_date_gte": expiration_date_gte,
+            "expiration_date_lte": expiration_date_lte,
+            "type": option_type,
+            "status": "active",
+            "limit": 10000,
+        }
+        contracts: list[Contract] = []
+        while True:
+            data = self._request(
+                "GET", self.config.trading_base_url, "/v2/options/contracts", params=params
+            )
+            for item in data.get("option_contracts", []):
+                if not item.get("tradable", True):
+                    continue
+                contracts.append(
+                    Contract(
+                        symbol=item["symbol"],
+                        strike=Decimal(str(item["strike_price"])),
+                        expiration_date=item["expiration_date"],
+                    )
+                )
+            token = data.get("next_page_token")
+            if not token:
+                return contracts
+            params["page_token"] = token
+
+    def option_chain_snapshots(
+        self, symbol: str, expiration_date: str, option_type: str
+    ) -> list[OptionSnapshot]:
+        """Return quoted contracts with the Greeks required by the wheel selector."""
+
+        if option_type not in {"call", "put"}:
+            raise ValueError("option_type must be call or put")
+        params: dict[str, Any] = {
+            "feed": self.config.options_feed,
+            "expiration_date": expiration_date,
+            "type": option_type,
+            "limit": 1000,
+        }
+        snapshots: list[OptionSnapshot] = []
+        while True:
+            data = self._request(
+                "GET",
+                self.config.data_base_url,
+                f"/v1beta1/options/snapshots/{symbol}",
+                params=params,
+            )
+            for contract_symbol, snapshot in data.get("snapshots", {}).items():
+                quote = snapshot.get("latestQuote")
+                greeks = snapshot.get("greeks") or {}
+                implied_volatility = snapshot.get("impliedVolatility")
+                if not quote or greeks.get("delta") is None or implied_volatility is None:
+                    continue
+                try:
+                    strike = Decimal(contract_symbol[-8:]) / Decimal("1000")
+                    bid = Decimal(str(quote["bp"]))
+                    ask = Decimal(str(quote["ap"]))
+                    delta = Decimal(str(greeks["delta"]))
+                    iv = Decimal(str(implied_volatility))
+                    observed_at = _timestamp(quote["t"])
+                except (KeyError, ValueError, ArithmeticError):
+                    LOG.warning("ignored malformed option snapshot %s", contract_symbol)
+                    continue
+                if bid < 0 or ask <= 0 or ask < bid or iv <= 0:
+                    continue
+                snapshots.append(
+                    OptionSnapshot(
+                        symbol=contract_symbol,
+                        strike=strike,
+                        expiration_date=expiration_date,
+                        option_type=option_type,
+                        quote=Quote(bid=bid, ask=ask, timestamp=observed_at),
+                        delta=delta,
+                        implied_volatility=iv,
+                    )
+                )
+            token = data.get("next_page_token")
+            if not token:
+                return snapshots
+            params["page_token"] = token
+
     def option_quotes(
         self, symbols: list[str], *, allow_missing: bool = False
     ) -> dict[str, Quote]:
@@ -357,6 +468,35 @@ class AlpacaClient:
             payload["limit_price"] = str(price.quantize(Decimal("0.01")))
         return self._request(
             "POST", self.config.trading_base_url, "/v2/orders", payload=payload
+        )
+
+    def submit_short_option(
+        self,
+        *,
+        symbol: str,
+        quantity: int,
+        limit_price: Decimal,
+        client_order_id: str,
+    ) -> dict[str, Any]:
+        """Sell one covered call or cash-secured put using a marketable limit."""
+
+        if quantity < 1:
+            raise ValueError("option quantity must be positive")
+        if limit_price <= 0:
+            raise ValueError("option limit price must be positive")
+        return self._request(
+            "POST",
+            self.config.trading_base_url,
+            "/v2/orders",
+            payload={
+                "symbol": symbol,
+                "qty": str(quantity),
+                "side": "sell",
+                "type": "limit",
+                "limit_price": str(limit_price.quantize(Decimal("0.01"))),
+                "time_in_force": "day",
+                "client_order_id": client_order_id,
+            },
         )
 
     def order(self, order_id: str) -> dict[str, Any]:

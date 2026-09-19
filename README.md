@@ -1,18 +1,47 @@
-# Floor Insurance Bot
+# Wheelhouse
 
-A small, auditable 0DTE credit-spread research bot for Alpaca. It includes an
-IWM zero-order shadow experiment and a strictly paper-only SPY limit probe that
-tests unchanged atomic order fills against Alpaca's simulator. SPY, QQQ, IWM,
-and paper-only XSP remain supported by the broader research engine. It is
-designed for a 1 GB RAM / 30 GB Linux VPS and includes Telegram notifications,
-persistent daily state, paper-trading defaults, zero-order shadow execution,
-circuit breakers, and a systemd service.
+Wheelhouse is a small, selective options-premium bot for Alpaca. It runs the
+wheel with covered calls when the account owns a complete 100-share lot and
+cash-secured puts when it owns no shares. It does not sell on autopilot: it
+requires usable quotes and Greeks, enforces collateral and yield floors, never
+sells a covered call below stock cost basis, and moves farther out of the money
+when a configured event crosses expiration or implied volatility is elevated
+relative to recent realized volatility.
+
+The old Floor Insurance 0DTE spread engine and its research ledgers remain in
+the repository under the backwards-compatible `floor-insurance` command. They
+are not part of the Wheelhouse order path.
 
 > [!WARNING]
-> This is experimental software, not investment advice. 0DTE options can lose
-> their full defined risk quickly. Start with Alpaca paper trading, supervise
-> it, and verify every assumption against your account permissions and market
-> data plan before considering live use.
+> This is experimental software, not investment advice. A cash-secured put can
+> acquire 100 shares per contract and a covered call can sell those shares at
+> its strike. Start with Alpaca paper trading, supervise it, and verify every
+> assumption against your account permissions and market data plan.
+
+## Wheelhouse strategy
+
+Run one broker-reconciled decision with `DRY_RUN=true` first:
+
+```bash
+WHEEL_SYMBOL=AAPL .venv/bin/wheelhouse doctor
+WHEEL_SYMBOL=AAPL .venv/bin/wheelhouse once
+```
+
+The wheel is intentionally a compact state machine:
+
+- 100 or more shares and no option position: consider a covered call;
+- zero shares and no option position: consider a cash-secured put;
+- an incomplete share lot, existing option position, open option order, stale
+  quote, wide market, insufficient collateral, or weak premium: do nothing;
+- after assignment or expiration changes the broker positions, the next run
+  naturally advances to the other side of the wheel.
+
+The normal selector targets 25 delta in the 28-45 DTE window. If
+`WHEEL_EVENT_DATES` contains an earnings, ex-dividend, or other known event on
+or before expiration, or ATM IV is at least 1.5 times 20-day realized
+volatility, it targets 15 delta instead. These are configurable guardrails, not
+a claim that premium selling has positive expectancy. See
+[the Wheelhouse guide](docs/WHEELHOUSE.md) for configuration and safety details.
 
 ## Important corrections to the original rulebook
 
@@ -222,7 +251,8 @@ validation produced 106 averaging +$2.92 with profit factor 2.85. It remained
 positive at the preregistered one-cent-per-contract-unit stress. However,
 validation falls to only +$0.27 at two cents and turns negative at three cents.
 Because historical one-minute prints are not synchronized executable quotes,
-this is a paper-probe candidate—not established live alpha. See
+this is a paper-probe candidate—not established live alpha. **It was subsequently
+rejected outright**; see the entry-delay result below and
 [the surface-butterfly ledger](docs/SURFACE_BUTTERFLY_RESEARCH.md).
 
 The candidate now has a separate forward runner that scans current quote sides
@@ -240,7 +270,8 @@ hourly and took the first qualifier. It passed development: 427 training trades
 averaged +$4.22 (PF 4.55), and 145 validation trades averaged +$3.99 (PF 3.47).
 The doubled-friction validation remained +$2.51, but a post-result three-cent
 per-unit fill penalty turned validation negative at -$1.01. Most entries were
-at 10:00. This supports paper execution testing, not live deployment. See
+at 10:00. This supports paper execution testing, not live deployment. **It was
+subsequently rejected outright** at every one of its five slots; see below and
 [the intraday surface ledger](docs/INTRADAY_SURFACE_BUTTERFLY_RESEARCH.md).
 
 The matching paper-forward runner is `floor-surface-butterfly-probe
@@ -262,6 +293,98 @@ its headline tables, which indicates the advertised gain belongs to the
 kernel-weighting layer and not to the signature basis. This line is closed and
 the sealed holdout was never opened. See
 [the signature hedge ledger](docs/SIGNATURE_HEDGE_RESEARCH.md).
+
+Placebo diagnostics were then run against the surface butterfly, the only
+hypothesis to pass a development screen. Reading the existing cache only, the
+control reproduces the recorded result exactly, and the stale-print explanation
+fails: requiring all six entry prints to have traded at least 25 contracts
+leaves +$3.73 and +$4.85 per trade, P&L is flat across leg-volume buckets, and a
+one-minute entry shift changes nothing. Inverting the trade to buy the
+*expensive* butterfly loses -$2.54 and -$3.90 at profit factors of 0.30 and
+0.09, so the two sides are complements rather than a shared long-gamma drift.
+Removing the parity gate entirely still earns +$0.88 and +$1.20, so about a
+dollar of the four is generic cheap-convexity drift and the rest is the gap.
+None of this addresses executable pricing, which remains the binding unknown.
+See [the parity diagnostic](docs/SURFACE_PARITY_DIAGNOSTIC.md).
+
+**That diagnostic reached the wrong conclusion, and the surface butterfly is now
+rejected.** Its `entry_shift_1min` variant moves the signal *and* the fill to
+11:01, so it tests only whether the edge is tied to the 11:00 clock — it cannot
+detect a stale print, because signal and transaction stay on the same prints. The
+control it needed picks the structure from the 11:00 cross-section and pays the
+11:01 print. Under it, training goes from +$4.10 to **-$3.79** and validation from
++$2.92 to **-$3.80**, profit factor from 4.01 to 0.37, win rate from 0.543 to
+0.249. Two minutes is worse still. The mechanism is not subtle: the average
+butterfly the rule buys prints at $0.03 at 11:00 and $0.11 at 11:01, so the
+$0.07 of slippage is essentially the entire $0.08 gap being selected on, and on
+44% of trades the price actually paid breaches the strategy's own $0.10 debit cap.
+The rule qualifies its trades only because the price it inspects is not the price
+it gets. This also kills the paired six-leg variant the diagnostic proposed, whose
+whole P&L would have been that gap.
+
+The same control was then run at each of the intraday variant's five hourly
+slots. **All ten cells flip sign**: controls of +$3.65 to +$5.71 per trade become
+-$1.93 to -$4.81, with $0.06 to $0.09 of fill slippage and 37% to 47% of paid
+debits breaching the cap, while `entry_shift_1min` stays positive in all ten. That
+is the cleanest available proof that the two variants are different tests, and it
+closes the entire surface family. The sealed holdout was never opened.
+
+`floor-parity-recorder` addresses that unknown directly. It is a zero-order
+quote recorder that observes the SPY 0DTE ladder at five locked hourly slots and
+measures what displayed bid/ask would actually pay for three structures whose
+payoff is bounded or deterministic: the payoff-neutral paired call/put butterfly,
+debit verticals outside `[0, width]`, and boxes away from their settlement width.
+A positive edge means displayed quotes permitted a riskless trade. The module has
+no order-construction path and a test asserts it can never acquire one. Its
+preregistered decision rule closes the whole surface family if the median
+executable edge is at or below -$0.05 over 20 OPRA sessions. A first read-only
+smoke scan showed a mid parity gap averaging about $0.06 against the $0.18 to
+$0.26 measured from trade prints, and a negative executable edge at all seven
+centers — the shape the print-artifact hypothesis predicts, on stale indicative
+quotes that settle nothing. See
+[the parity recorder protocol](docs/PARITY_RECORDER.md).
+
+That forward wait is unavoidable for quotes, but the fill-cost question turned
+out to be answerable from data already on disk. `floor-spread-estimator` runs
+four microstructure estimators — Roll, Corwin-Schultz, Abdi-Ranaldo, and a
+range decomposition against the underlying — over 575 pre-holdout sessions and
+50,554 series-windows of cached 1-minute option bars, after calibrating each
+one's bias on synthetic bars with a known spread. The bias-corrected ATM
+half-spread comes in at $0.004 to $0.006 per contract unit against the modeled
+$0.005, while the level that kills the surviving surface line is $0.03, implying
+a six-cent round trip on a one-dollar option. **The modeled fill cost is
+therefore not optimistic, and no rejected line can be revived by assuming
+cheaper fills.** The range decomposition passes its own falsification test: its
+fitted slope is an implied `|delta|` and decays monotonically from 0.384 at the
+money to 0.215 in the wings. Combined with the parity diagnostic's print-versus-
+quote gap, this relocates the surface butterfly's problem from execution to the
+signal itself. See [the spread estimator](docs/SPREAD_ESTIMATOR.md).
+
+With cost ruled out, `floor-smile-residual-research` went after the signal side
+directly: fit `log B ~ a + b i + c i^2` across each single minute's butterflies —
+a Gaussian smile makes that exact, and a one-timestamp fit cannot leak — then
+trade the strikes whose density the market prices away from their own neighbours.
+Over 432 training and 145 validation sessions it looked excellent: profit factor
+3.74, a 69% win rate, validation agreeing with training, survival at double fill
+cost, bootstrap probability of a profitable year 1.00, and graceful decay from
+$4.53 to $2.73 per trade as the persistence requirement rose from one minute to
+five. **Delaying the fill by one minute took it to −$0.20 and the win rate to
+0.497.** The whole result was the ability to transact at the print that generated
+the signal, consistent with a residual whose half-life is 0.34 minutes and with
+one butterfly in nine printing negative — an outright no-arbitrage violation.
+
+The generalisable part is why the persistence filter missed it. Prints are not
+stale at random: an illiquid strike lags *consistently*, so its butterfly stays
+dislocated minute after minute while never being tradable, and tightening a
+persistence filter selects for chronic staleness rather than against it. An entry
+delay attacks the mechanism instead of a proxy for it. Because the two controls
+disagree completely on identical trades, **any result here validated by
+persistence or timing robustness alone should be treated as unproven until re-run
+under a true entry delay.** That includes the surviving surface butterfly: its
+`entry_shift_1min` variant moves the signal *and* the fill to 11:01, which shows
+the edge is not specific to the 11:00 clock but never asks it to trade away from
+the print that generated it. Running that control is the next thing to do. See
+[the smile residual screen](docs/SMILE_RESIDUAL_RESEARCH.md).
 
 The default `TAKE_PROFIT_FRACTION=none` holds until the spread stop or hard
 close. `MAX_DAILY_ENTRIES=1` intentionally disables same-day re-entry

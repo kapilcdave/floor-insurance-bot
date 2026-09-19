@@ -3,19 +3,20 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "floor-insurance-bot"
-version = "0.4.0"
-description = "Resource-light 0DTE credit-spread research and Alpaca bot"
+name = "wheelhouse-options"
+version = "0.5.0"
+description = "A selective covered-call and cash-secured-put wheel for Alpaca"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
-authors = [{name = "Floor Insurance Bot contributors"}]
+authors = [{name = "Wheelhouse contributors"}]
 dependencies = ["requests>=2.32,<3"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<9", "pytest-cov>=5,<7", "ruff>=0.12,<1"]
 
 [project.scripts]
+wheelhouse = "floor_insurance.wheel_cli:main"
 floor-insurance = "floor_insurance.cli:main"
 floor-insurance-backtest = "floor_insurance.backtest:main"
 floor-directional-backtest = "floor_insurance.directional_backtest:main"
@@ -37,6 +38,10 @@ floor-surface-butterfly-research = "floor_insurance.surface_butterfly_research:m
 floor-surface-butterfly-probe = "floor_insurance.surface_butterfly_probe:main"
 floor-intraday-surface-research = "floor_insurance.intraday_surface_research:main"
 floor-signature-hedge-research = "floor_insurance.signature_hedge_research:main"
+floor-parity-recorder = "floor_insurance.parity_recorder:main"
+floor-spread-estimator = "floor_insurance.spread_estimator:main"
+floor-smile-residual-research = "floor_insurance.smile_residual_research:main"
+floor-final-hour-research = "floor_insurance.final_hour_research:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

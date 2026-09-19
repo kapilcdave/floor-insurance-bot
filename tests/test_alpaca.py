@@ -91,6 +91,34 @@ class PartialQuotesSession(Session):
         )
 
 
+class WheelChainSession(Session):
+    def request(self, method, url, **kwargs):
+        self.calls.append((method, url, kwargs))
+        return Response(
+            {
+                "snapshots": {
+                    "AAPL261002P00190000": {
+                        "latestQuote": {
+                            "bp": "1.20",
+                            "ap": "1.30",
+                            "t": "2026-08-28T18:00:00Z",
+                        },
+                        "greeks": {"delta": "-0.22"},
+                        "impliedVolatility": "0.31",
+                    },
+                    "AAPL261002P00180000": {
+                        "latestQuote": {
+                            "bp": "0.50",
+                            "ap": "0.60",
+                            "t": "2026-08-28T18:00:00Z",
+                        }
+                    },
+                },
+                "next_page_token": None,
+            }
+        )
+
+
 def test_credit_spread_is_atomic_and_credit_price_is_negative(config):
     session = Session()
     client = AlpacaClient(config, session=session)
@@ -209,3 +237,39 @@ def test_option_quote_scan_can_ignore_contracts_without_snapshots(config):
 
     assert list(quotes) == ["present"]
     assert quotes["present"].bid == Decimal("0.30")
+
+
+def test_short_option_uses_a_positive_marketable_limit(config):
+    session = Session()
+    client = AlpacaClient(config, session=session)
+
+    client.submit_short_option(
+        symbol="AAPL261002P00190000",
+        quantity=1,
+        limit_price=Decimal("1.23"),
+        client_order_id="wheelhouse-aapl-2026-08-28-put",
+    )
+
+    payload = session.calls[0][2]["json"]
+    assert payload == {
+        "symbol": "AAPL261002P00190000",
+        "qty": "1",
+        "side": "sell",
+        "type": "limit",
+        "limit_price": "1.23",
+        "time_in_force": "day",
+        "client_order_id": "wheelhouse-aapl-2026-08-28-put",
+    }
+
+
+def test_wheel_chain_requires_quote_greeks_and_implied_volatility(config):
+    session = WheelChainSession()
+    client = AlpacaClient(config, session=session)
+
+    snapshots = client.option_chain_snapshots("AAPL", "2026-10-02", "put")
+
+    assert len(snapshots) == 1
+    assert snapshots[0].strike == Decimal("190")
+    assert snapshots[0].delta == Decimal("-0.22")
+    assert snapshots[0].implied_volatility == Decimal("0.31")
+    assert session.calls[0][2]["params"]["expiration_date"] == "2026-10-02"
